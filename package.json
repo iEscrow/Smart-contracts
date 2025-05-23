@@ -1,0 +1,21 @@
+{
+  "name": "smart-contracts",
+  "version": "1.0.0",
+  "description": "08.20 compiler remix",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "chai": "^4.3.7",
+    "ethers": "^6.14.1",
+    "hardhat": "^2.24.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.0"
+  }
+}
