@@ -486,6 +486,12 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         return pendingReward + bonusQ + bonusT;
     }
 
+    /// @notice Función pública para obtener C-Shares de un stake específico
+    function getStakeTokensC(address user, uint256 stakeIndex) external view returns (uint256) {
+        require(stakeIndex < _stakes[user].length, "TokenStaking: invalid stake index");
+        return _getUserTokensC(user, stakeIndex);
+    }
+
     /// @notice Devuelve la suma de todos los tokens “C” de un usuario (todos sus stakes)
     function getUserTokensC(address user) external view returns (uint256) {
         uint256 totalC = 0;
