@@ -275,6 +275,11 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     
     // Nuevo: cada usuario puede tener varios stakes
     mapping(address => StakeInfo[]) private _stakes;             // *** CAMBIO
+    
+    // Para tracking de usuarios activos (distribución diaria)
+    address[] private _activeUsers;                              // Array de usuarios activos
+    mapping(address => bool) private _isActiveUser;              // Mapping para verificar si es usuario activo
+    mapping(address => uint256) private _userIndex;              // Índice en el array _activeUsers
 
     // ----------------------------------------
     // === 4) Variables de estado (casi igual al original) ===
@@ -604,6 +609,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         // *** CAMBIO: actualizamos contadores
         if (_stakes[msg.sender].length == 1) {
             _totalUsers += 1;
+            _addActiveUser(msg.sender); // Agregar a usuarios activos
         }
         _totalStakedTokens += _amount;
 
@@ -653,6 +659,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         arr.pop();
         if (arr.length == 0) {
             _totalUsers -= 1;
+            _removeActiveUser(msg.sender); // Remover de usuarios activos
         }
 
         // Remint principal y transferir reward neto
@@ -691,5 +698,122 @@ contract TokenStaking is Ownable, ReentrancyGuard {
 
     function getCurrentTime() internal view virtual returns (uint256) {
         return block.timestamp;
+    }
+
+    // ========================================================
+    // === 13) FUNCIÓN DE DISTRIBUCIÓN DIARIA ===
+    // ========================================================
+    
+    /// @notice Distribuye rewards diarios a todos los stakers activos
+    /// @dev Esta función debe ser llamada diariamente (a las 00:00 UTC)
+    /// @param dailyRewardPercentage Porcentaje del total supply a distribuir (ej: 100 = 0.01%)
+    function distributeDailyRewards(uint256 dailyRewardPercentage) external onlyOwner {
+        require(dailyRewardPercentage > 0, "TokenStaking: percentage must be > 0");
+        require(dailyRewardPercentage <= 1000, "TokenStaking: percentage too high"); // max 10%
+        
+        uint256 totalSupply = IERC20(_tokenAddress).totalSupply();
+        uint256 dailyRewardAmount = (totalSupply * dailyRewardPercentage) / 1000000; // 1000000 = 100%
+        
+        require(dailyRewardAmount > 0, "TokenStaking: no rewards to distribute");
+        require(_activeUsers.length > 0, "TokenStaking: no active users");
+        
+        uint256 totalCShareValue = 0;
+        address[] memory activeUsers = _getActiveUsers();
+        
+        // Calcular el total de C-shares de todos los usuarios
+        for (uint256 i = 0; i < activeUsers.length; i++) {
+            uint256 userCShare = this.getUserTokensC(activeUsers[i]);
+            totalCShareValue += userCShare;
+        }
+        
+        require(totalCShareValue > 0, "TokenStaking: no C-shares to distribute");
+        
+        // Distribuir rewards proporcionalmente
+        for (uint256 i = 0; i < activeUsers.length; i++) {
+            uint256 userCShare = this.getUserTokensC(activeUsers[i]);
+            if (userCShare > 0) {
+                uint256 userReward = (dailyRewardAmount * userCShare) / totalCShareValue;
+                if (userReward > 0) {
+                    // Mint tokens para el usuario
+                    IMintableERC20(_tokenAddress).mint(activeUsers[i], userReward);
+                    emit ClaimReward(activeUsers[i], userReward);
+                }
+            }
+        }
+        
+        _totalPaidTokens += dailyRewardAmount;
+    }
+    
+    /// @notice Función auxiliar para obtener usuarios activos
+    function _getActiveUsers() internal view returns (address[] memory) {
+        return _activeUsers;
+    }
+    
+    /// @notice Agregar usuario a la lista de activos
+    function _addActiveUser(address user) internal {
+        if (!_isActiveUser[user]) {
+            _isActiveUser[user] = true;
+            _userIndex[user] = _activeUsers.length;
+            _activeUsers.push(user);
+        }
+    }
+    
+    /// @notice Remover usuario de la lista de activos
+    function _removeActiveUser(address user) internal {
+        if (_isActiveUser[user]) {
+            uint256 index = _userIndex[user];
+            uint256 lastIndex = _activeUsers.length - 1;
+            
+            if (index != lastIndex) {
+                address lastUser = _activeUsers[lastIndex];
+                _activeUsers[index] = lastUser;
+                _userIndex[lastUser] = index;
+            }
+            
+            _activeUsers.pop();
+            _isActiveUser[user] = false;
+            delete _userIndex[user];
+        }
+    }
+    
+    /// @notice Verificar si un usuario tiene stakes activos
+    function _hasActiveStakes(address user) internal view returns (bool) {
+        return _stakes[user].length > 0;
+    }
+    
+    /// @notice Obtener el número total de usuarios activos
+    function getActiveUsersCount() external view returns (uint256) {
+        return _activeUsers.length;
+    }
+    
+    /// @notice Obtener un usuario activo por índice
+    function getActiveUserByIndex(uint256 index) external view returns (address) {
+        require(index < _activeUsers.length, "TokenStaking: index out of bounds");
+        return _activeUsers[index];
+    }
+    
+    /// @notice Verificar si una dirección es usuario activo
+    function isActiveUser(address user) external view returns (bool) {
+        return _isActiveUser[user];
+    }
+    
+    /// @notice Calcular rewards diarios estimados para un usuario
+    function getEstimatedDailyReward(address user, uint256 dailyRewardPercentage) external view returns (uint256) {
+        if (!_isActiveUser[user]) return 0;
+        
+        uint256 totalSupply = IERC20(_tokenAddress).totalSupply();
+        uint256 dailyRewardAmount = (totalSupply * dailyRewardPercentage) / 1000000;
+        
+        uint256 userCShare = this.getUserTokensC(user);
+        uint256 totalCShareValue = 0;
+        
+        address[] memory activeUsers = _getActiveUsers();
+        for (uint256 i = 0; i < activeUsers.length; i++) {
+            totalCShareValue += this.getUserTokensC(activeUsers[i]);
+        }
+        
+        if (totalCShareValue == 0) return 0;
+        
+        return (dailyRewardAmount * userCShare) / totalCShareValue;
     }
 }
