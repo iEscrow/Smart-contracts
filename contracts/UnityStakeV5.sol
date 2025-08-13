@@ -91,7 +91,7 @@ library Address {
         if (success) {
             return returndata;
         } else {
-            // Si hubo “revert reason” en returndata, se hace revert con ese reason
+            // Si hubo "revert reason" en returndata, se hace revert con ese reason
             if (returndata.length > 0) {
                 /// @solidity memory-safe-assembly
                 assembly {
@@ -239,12 +239,17 @@ interface IMintableERC20 is IERC20 {
 }
 
 contract TokenStaking is Ownable, ReentrancyGuard {
+    // ===================================================
+    // === CONSTANTES PARA QUEMA DE TOKENS ===
+    // ===================================================
+    address private constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
     // -------------------------------------------
-    // === 1) Estructura “User” original (monostake) ===
+    // === 1) Estructura "User" original (monostake) ===
     // -------------------------------------------
-    // La conservamos, pero ya no almacenará el stake “global”,
+    // La conservamos, pero ya no almacenará el stake "global",
     // sino solo campos necesarios para seguimiento de rewards. 
-    // El “stakeAmount” y fechas originales se reemplazan por un array de stakes.
+    // El "stakeAmount" y fechas originales se reemplazan por un array de stakes.
     struct User {
         uint256 rewardAmount;            // recompensa acumulada pending
         uint256 lastRewardCalculationTime; 
@@ -271,7 +276,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     // Antes:
     // mapping(address => User) private _users;
     // mapping(address => User) private _users;
-    mapping(address => User) private _users;                      // sigue existiendo para trackear rewards “globales” del usuario, si hace falta
+    mapping(address => User) private _users;                      // sigue existiendo para trackear rewards "globales" del usuario, si hace falta
     
     // Nuevo: cada usuario puede tener varios stakes
     mapping(address => StakeInfo[]) private _stakes;             // *** CAMBIO
@@ -313,7 +318,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     event ClaimReward(address indexed user, uint256 amount);             // se emite cuando se cobra reward
 
     // =====================================================
-    // === 6) Modifier original “whenTreasuryHasBalance” ===
+    // === 6) Modifier original "whenTreasuryHasBalance" ===
     // =====================================================
     modifier whenTreasuryHasBalance(uint256 amount) {
         require(
@@ -363,7 +368,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     }
 
     function getStakeEndDate(address _address) external view returns (uint256) {
-        // *** CAMBIO: devuelve el ‘end’ del primer stake activo (índice 0), o 0 si no hay.
+        // *** CAMBIO: devuelve el 'end' del primer stake activo (índice 0), o 0 si no hay.
         StakeInfo[] storage arr = _stakes[_address];
         if (arr.length == 0) {
             return 0;
@@ -401,7 +406,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     }
 
     function getUserEstimatedRewards() external view returns (uint256) {
-        // *** CAMBIO: sumamos rewardAmount “global” almacenado en _users + reward pendientede calcular en cada stake
+        // *** CAMBIO: sumamos rewardAmount "global" almacenado en _users + reward pendientede calcular en cada stake
         uint256 globalStored = _users[msg.sender].rewardAmount;
         uint256 accumulated = 0;
         StakeInfo[] storage arr = _stakes[msg.sender];
@@ -467,11 +472,11 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     }
 
     // ======================================================
-    // === 9) MÉTODOS NUEVOS para tokens “C” y C-Share etc. ===
+    // === 9) MÉTODOS NUEVOS para tokens "C" y C-Share etc. ===
     // ======================================================
     // Estos métodos no existían en el original, los agregamos justo aquí:
 
-    /// @notice Devuelve los tokens “C” efectivos de un stake específico
+    /// @notice Devuelve los tokens "C" efectivos de un stake específico
     function _getUserTokensC(address user, uint256 stakeIndex) private view returns (uint256) {
         StakeInfo storage s = _stakes[user][stakeIndex];
 
@@ -497,7 +502,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         return _getUserTokensC(user, stakeIndex);
     }
 
-    /// @notice Devuelve la suma de todos los tokens “C” de un usuario (todos sus stakes)
+    /// @notice Devuelve la suma de todos los tokens "C" de un usuario (todos sus stakes)
     function getUserTokensC(address user) external view returns (uint256) {
         uint256 totalC = 0;
         StakeInfo[] storage arr = _stakes[user];
@@ -581,7 +586,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     // === 11) USER METHODS (con cambios) ===
     // =====================================
 
-    /// @notice Stake “regular” (cada usuario) 
+    /// @notice Stake "regular" (cada usuario) 
     function stake(uint256 _amount, uint _days) external nonReentrant {
         require(!_isStakingPaused, "TokenStaking: staking is paused");
         require(_amount <= _maxStakeTokenLimit, "TokenStaking: max staking token limit reached");
@@ -591,9 +596,10 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         uint256 currentTime = getCurrentTime();
         uint256 endTime = currentTime + _days * 1 days;
 
-        // *** CAMBIO: Transferimos & quemamos tokens iniciales (igual que antes)
-        IERC20(_tokenAddress).transferFrom(msg.sender, address(this), _amount * 1e18);
-        IERC20(_tokenAddress).transfer(address(0), _amount * 1e18);
+        // *** CORRECCIÓN: El frontend ya envía en wei, no multiplicamos por 1e18
+        IERC20(_tokenAddress).transferFrom(msg.sender, address(this), _amount);
+        // *** CORRECCIÓN: Usar dirección de quema específica en lugar de address(0)
+        IERC20(_tokenAddress).transfer(BURN_ADDRESS, _amount);
 
         // *** CAMBIO: Creamos un StakeInfo nuevo y lo pusheamos en el array de `_stakes[msg.sender]`
         StakeInfo memory newStake = StakeInfo({
@@ -644,7 +650,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         if (currentTime < s.end) {
             fee = (pendingReward * _earlyUnstakeFeePercentage) / PERCENTAGE_DENOMINATOR;
             uint256 burnAmount = (fee * 25) / 100; 
-            IERC20(_tokenAddress).transfer(address(0), burnAmount);
+            // *** CORRECCIÓN: Usar dirección de quema específica en lugar de address(0)
+            IERC20(_tokenAddress).transfer(BURN_ADDRESS, burnAmount);
             emit EarlyUnStakeFee(msg.sender, burnAmount);
         }
 
@@ -662,23 +669,23 @@ contract TokenStaking is Ownable, ReentrancyGuard {
             _removeActiveUser(msg.sender); // Remover de usuarios activos
         }
 
-        // Remint principal y transferir reward neto
-        IMintableERC20(_tokenAddress).mint(msg.sender, principal * 1e18);
+        // *** CORRECCIÓN: El frontend ya maneja la conversión, no multiplicamos por 1e18
+        IMintableERC20(_tokenAddress).mint(msg.sender, principal);
         IERC20(_tokenAddress).transfer(msg.sender, rewardToSend);
 
         emit UnStake(msg.sender, principal);
         emit ClaimReward(msg.sender, rewardToSend);
     }
 
-    /// @notice No existe ya “unstake(uint256 _amount)”: se reemplaza por unstakeSpecific.
-    /// De igual manera, “claimReward()” se combina dentro de unstakeSpecific, por eso lo eliminamos.
+    /// @notice No existe ya "unstake(uint256 _amount)": se reemplaza por unstakeSpecific.
+    /// De igual manera, "claimReward()" se combina dentro de unstakeSpecific, por eso lo eliminamos.
 
     // ===================================================
     // === 12) HELPERS PRIVADOS (calc rewards, rewardPerToken) ===
     // ===================================================
     function _calculateRewards(address _user) private {
         // *** CAMBIO: ahora no usamos un reward global simple, porque cada stake tiene su propio rewardAmount.
-        // Si quieres acumular reward “global” podrías distribuir _getUserEstimatedRewards entre stakes,
+        // Si quieres acumular reward "global" podrías distribuir _getUserEstimatedRewards entre stakes,
         // pero en la práctica se integra el reward en getUserEstimatedRewards() y se cobra en unstakeSpecific.
     }
 
