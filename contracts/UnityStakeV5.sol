@@ -628,9 +628,16 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     }
 
     /// @notice Deshacer un stake específico (por índice) y pagar solo ese principal + reward
-    function unstakeSpecific(uint256 index) external nonReentrant whenTreasuryHasBalance(_stakes[msg.sender][index].amount) {
+    function unstakeSpecific(uint256 index) external nonReentrant {
         StakeInfo[] storage arr = _stakes[msg.sender];
         require(index < arr.length, "TokenStaking: invalid stake index");
+        
+        // Verificar que el treasury tiene suficiente balance después de verificar el índice
+        require(
+            IERC20(_tokenAddress).balanceOf(address(this)) >= arr[index].amount,
+            "TokenStaking: insufficient funds in the treasury"
+        );
+        
         StakeInfo storage s = arr[index];
         uint256 principal = s.amount;
 
