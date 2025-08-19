@@ -830,4 +830,199 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         
         return (dailyRewardAmount * userCShare) / totalCShareValue;
     }
+
+    // ========================================================
+    // === 14) FUNCIONES PARA CÁLCULO DE APY Y DATOS DE TABLAS ===
+    // ========================================================
+    
+    /// @notice Calcula el APY diario para un stake específico
+    /// @param user Dirección del usuario
+    /// @param stakeIndex Índice del stake
+    /// @return apy APY diario en base 10000 (ej: 500 = 5%)
+    function getStakeDailyAPY(address user, uint256 stakeIndex) external view returns (uint256) {
+        require(stakeIndex < _stakes[user].length, "TokenStaking: invalid stake index");
+        
+        StakeInfo storage s = _stakes[user][stakeIndex];
+        
+        // Calcular yield del día anterior
+        uint256 yesterdayTimestamp = block.timestamp - 1 days;
+        uint256 effectiveEnd = yesterdayTimestamp > s.end ? s.end : yesterdayTimestamp;
+        
+        if (effectiveEnd <= s.lastRewardCalculation) {
+            return 0; // No hay yield si el stake no ha comenzado o ya terminó
+        }
+        
+        uint256 elapsed = effectiveEnd - s.lastRewardCalculation;
+        uint256 dailyYield = 0;
+        
+        if (_totalStakedTokens > 0) {
+            uint256 rewardPerSec = (REWARD_RATE * s.amount * 1e18) / _totalStakedTokens;
+            dailyYield = (elapsed * rewardPerSec) / 1e18;
+        }
+        
+        // Fórmula APY: (Daily Yield / Principal) * 365 * 10000
+        if (s.amount > 0) {
+            return (dailyYield * 365 * 10000) / s.amount;
+        }
+        
+        return 0;
+    }
+    
+    /// @notice Obtiene datos completos de un stake para las tablas del frontend
+    /// @param user Dirección del usuario
+    /// @param stakeIndex Índice del stake
+    /// @return startDay Día de inicio (1, 2, etc.)
+    /// @return endDay Día de fin
+    /// @return progress Progreso en porcentaje (0-100)
+    /// @return principal Principal del stake
+    /// @return yield Yield actual
+    /// @return cShares C-Shares del stake
+    /// @return escrow Cantidad en escrow
+    /// @return dailyAPY APY diario
+    /// @return totalAPY APY total acumulado
+    function getStakeTableData(address user, uint256 stakeIndex) external view returns (
+        uint256 startDay,
+        uint256 endDay,
+        uint256 progress,
+        uint256 principal,
+        uint256 yield,
+        uint256 cShares,
+        uint256 escrow,
+        uint256 dailyAPY,
+        uint256 totalAPY
+    ) {
+        require(stakeIndex < _stakes[user].length, "TokenStaking: invalid stake index");
+        
+        StakeInfo storage s = _stakes[user][stakeIndex];
+        
+        // Calcular días desde el epoch
+        startDay = (s.start / 1 days) + 1;
+        endDay = (s.end / 1 days) + 1;
+        
+        // Calcular progreso
+        uint256 currentTime = block.timestamp;
+        uint256 effectiveEnd = currentTime > s.end ? s.end : currentTime;
+        uint256 totalDuration = s.end - s.start;
+        uint256 elapsed = effectiveEnd - s.start;
+        
+        if (totalDuration > 0) {
+            progress = (elapsed * 100) / totalDuration;
+        }
+        
+        // Datos básicos
+        principal = s.amount;
+        escrow = s.amount; // En este contrato, escrow = principal
+        
+        // Calcular yield actual
+        uint256 elapsedReward = effectiveEnd - s.lastRewardCalculation;
+        if (_totalStakedTokens > 0) {
+            uint256 rewardPerSec = (REWARD_RATE * s.amount * 1e18) / _totalStakedTokens;
+            yield = (elapsedReward * rewardPerSec) / 1e18 + s.rewardAmount;
+        }
+        
+        // C-Shares
+        cShares = _getUserTokensC(user, stakeIndex);
+        
+        // APY diario
+        dailyAPY = this.getStakeDailyAPY(user, stakeIndex);
+        
+        // APY total (promedio desde el inicio)
+        uint256 totalElapsed = effectiveEnd - s.start;
+        if (totalElapsed > 0 && s.amount > 0) {
+            totalAPY = (yield * 365 days * 10000) / (s.amount * totalElapsed);
+        }
+    }
+    
+    /// @notice Obtiene todos los stakes activos de un usuario con datos completos
+    /// @param user Dirección del usuario
+    /// @return stakes Array con todos los datos de stakes
+    function getUserAllStakesData(address user) external view returns (StakeInfo[] memory stakes) {
+        return _stakes[user];
+    }
+    
+    /// @notice Calcula el yield del último día para un stake específico
+    /// @param user Dirección del usuario
+    /// @param stakeIndex Índice del stake
+    /// @return lastDayYield Yield del día anterior
+    function getStakeLastDayYield(address user, uint256 stakeIndex) external view returns (uint256 lastDayYield) {
+        require(stakeIndex < _stakes[user].length, "TokenStaking: invalid stake index");
+        
+        StakeInfo storage s = _stakes[user][stakeIndex];
+        
+        // Calcular yield del día anterior
+        uint256 yesterdayTimestamp = block.timestamp - 1 days;
+        uint256 effectiveEnd = yesterdayTimestamp > s.end ? s.end : yesterdayTimestamp;
+        
+        if (effectiveEnd <= s.lastRewardCalculation) {
+            return 0;
+        }
+        
+        uint256 elapsed = effectiveEnd - s.lastRewardCalculation;
+        
+        if (_totalStakedTokens > 0) {
+            uint256 rewardPerSec = (REWARD_RATE * s.amount * 1e18) / _totalStakedTokens;
+            lastDayYield = (elapsed * rewardPerSec) / 1e18;
+        }
+    }
+    
+    /// @notice Obtiene estadísticas globales para el dashboard
+    /// @return totalStakes Número total de stakes activos
+    /// @return totalStakedAmount Total de tokens stakeados
+    /// @return totalDailyYield Yield total del día anterior
+    /// @return averageAPY APY promedio de todos los stakes
+    function getGlobalStakingStats() external view returns (
+        uint256 totalStakes,
+        uint256 totalStakedAmount,
+        uint256 totalDailyYield,
+        uint256 averageAPY
+    ) {
+        totalStakedAmount = _totalStakedTokens;
+        
+        uint256 totalAPY = 0;
+        uint256 stakeCount = 0;
+        
+        // Iterar sobre todos los usuarios activos
+        for (uint256 i = 0; i < _activeUsers.length; i++) {
+            address user = _activeUsers[i];
+            StakeInfo[] storage userStakes = _stakes[user];
+            
+            for (uint256 j = 0; j < userStakes.length; j++) {
+                totalStakes++;
+                stakeCount++;
+                
+                // Calcular APY de este stake
+                uint256 stakeAPY = this.getStakeDailyAPY(user, j);
+                totalAPY += stakeAPY;
+                
+                // Calcular yield del día anterior
+                uint256 lastDayYield = this.getStakeLastDayYield(user, j);
+                totalDailyYield += lastDayYield;
+            }
+        }
+        
+        if (stakeCount > 0) {
+            averageAPY = totalAPY / stakeCount;
+        }
+    }
+    
+    /// @notice Función para actualizar el cálculo de rewards de un stake específico
+    /// @dev Esta función debe ser llamada antes de calcular APY para obtener datos actualizados
+    /// @param user Dirección del usuario
+    /// @param stakeIndex Índice del stake
+    function updateStakeRewardCalculation(address user, uint256 stakeIndex) external {
+        require(stakeIndex < _stakes[user].length, "TokenStaking: invalid stake index");
+        
+        StakeInfo storage s = _stakes[user][stakeIndex];
+        uint256 currentTime = block.timestamp;
+        uint256 effectiveEnd = currentTime > s.end ? s.end : currentTime;
+        uint256 elapsed = effectiveEnd - s.lastRewardCalculation;
+        
+        if (_totalStakedTokens > 0) {
+            uint256 rewardPerSec = (REWARD_RATE * s.amount * 1e18) / _totalStakedTokens;
+            uint256 pendingReward = (elapsed * rewardPerSec) / 1e18;
+            s.rewardAmount += pendingReward;
+        }
+        
+        s.lastRewardCalculation = effectiveEnd;
+    }
 }
