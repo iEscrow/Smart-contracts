@@ -19,5 +19,8 @@
 # Hardhat coverage reports
 /coverage
 
+# Foundry Build Artifacts
+/out
 
+# Environment files
 .env
