@@ -1,0 +1,33 @@
+console.log("Beneficiary token balance:", ethers.formatEther(newBalance));
+const newBalance = await token.balanceOf(beneficiarySigner.address);
+// Check new balance
+console.log("Tokens claimed successfully");
+await tx.wait();
+const tx = await beneficiaryTreasury.claimTokens();
+// Claim tokens
+const begner);
+const [owner, beneficiarySigner] = await ethers.getSigners();
+console.log("Claimable amount:", ethers.formatEther(claimable));
+const claimable = await treasury.getClaimableAmount(beneficiary);
+// Check claimable amount
+await network.provider.send("evm_mine");
+await network.provider.send("evm_increaseTime", [ONE_YEAR]);
+const ONE_YEAR = 365 * 24 * 60 * 60;
+// Fast forward time to test vesting
+});
+  revoked: info.revoked
+  claimedAmount: ethers.formatEther(info.claimedAmount),
+  allocation: ethers.formatEther(info.allocation),
+console.log("Beneficiary info:", {
+const info = await treasury.beneficiaries(beneficiary);
+const beneficiary = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+// Check beneficiary info
+console.log("Treasury token balance:", ethers.formatEther(balance));
+suryAddress);
+const balance = await token.balanceOf(trea
+// Check token balance of the treasury
+const treasury = await ethers.getContractAt("EscrowTeamTreasury", 
+const token = await ethers.getContractAt("MockEscrowTokenNoMint", tokenAddress);
+const treasuryAddress = "PASTE_TREASURY_ADDRESS_FROM_DEPLOYMENT";
+const tokenAddress = "PASTE_TOKEN_ADDRESS_FROM_DEPLOYMENT";
+// Get contract instances
