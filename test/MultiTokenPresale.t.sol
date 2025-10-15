@@ -3,13 +3,15 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "forge-std/console.sol";
-import "../contracts/MultiTokenPresale.sol";
+import "../MultiTokenPresale.sol";
+import "../SimpleKYC.sol";
 import "../contracts/mocks/MockERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract MultiTokenPresaleTest is Test {
     MultiTokenPresale public presale;
+    SimpleKYC public kycContract;
     MockERC20 public presaleToken;
     IERC20Metadata public usdc;
     IERC20Metadata public weth;
@@ -64,15 +66,22 @@ contract MultiTokenPresaleTest is Test {
             100_000_000_000 ether // 100 billion for testing
         );
         
+        // Deploy KYC contract
+        kycContract = new SimpleKYC(makeAddr("kycSigner"));
+        
         // Deploy presale contract
         presale = new MultiTokenPresale(
             address(presaleToken),
             PRESALE_RATE,
-            MAX_TOKENS
+            MAX_TOKENS,
+            address(kycContract)
         );
         
         // Transfer presale tokens to contract
         presaleToken.transfer(address(presale), MAX_TOKENS);
+        
+        // Disable KYC requirement for existing tests
+        presale.setKYCRequired(false);
         
         // Get real mainnet tokens for testing
         usdc = IERC20Metadata(USDC_ADDRESS);

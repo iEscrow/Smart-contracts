@@ -1,26 +1,19 @@
-# Node modules
-/node_modules
-
-# Compilation output
-/dist
-
-# pnpm deploy output
-/bundle
-
-# Hardhat Build Artifacts
-/artifacts
-
-# Hardhat compilation (v2) support directory
-/cache
-
-# Typechain output
-/types
-
-# Hardhat coverage reports
-/coverage
-
 # Foundry Build Artifacts
 /out
+/cache
+/broadcast
+
+# Node modules (if needed)
+/node_modules
 
 # Environment files
 .env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

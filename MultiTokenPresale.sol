@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "./SimpleKYC.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
@@ -23,6 +24,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     uint256 public presaleRate;  // Tokens per USD (18 decimals)
     uint256 public maxTokensToMint;
     uint256 public totalTokensMinted;
+    
+    // KYC integration
+    SimpleKYC public kycContract;
+    bool public kycRequired = true; // KYC is required by default
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -81,22 +86,38 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event RoundAdvanced(uint256 fromRound, uint256 toRound, uint256 timestamp);
     event EmergencyEnd(uint256 timestamp);
     event AutoStartTriggered(uint256 timestamp);
+    event KYCContractUpdated(address indexed oldContract, address indexed newContract);
+    event KYCRequirementUpdated(bool required);
     
     constructor(
         address _presaleToken,
         uint256 _presaleRate, // 0.0015 dollar per token && presaleRate = 666666666666666666; // 666.666... with 18 decimals
-        uint256 _maxTokensToMint // 5 billion tokens to presale
+        uint256 _maxTokensToMint, // 5 billion tokens to presale
+        address _kycContract
     ) Ownable(msg.sender) {
         require(_presaleToken != address(0), "Invalid presale token");
         require(_presaleRate > 0, "Invalid presale rate");
         require(_maxTokensToMint > 0, "Invalid max tokens");
+        require(_kycContract != address(0), "Invalid KYC contract");
         
         presaleToken = IERC20(_presaleToken);
         presaleRate = _presaleRate;
         maxTokensToMint = _maxTokensToMint;
+        kycContract = SimpleKYC(_kycContract);
         
         // Initialize default token prices and limits
         _initializeDefaultTokens();
+    }
+    
+    // ============ MODIFIERS ============
+    
+    /// @notice Modifier to check if KYC is verified for the beneficiary
+    /// @param beneficiary Address to check KYC status for
+    modifier onlyKYCVerified(address beneficiary) {
+        if (kycRequired) {
+            require(kycContract.isCurrentlyVerified(beneficiary), "KYC verification required");
+        }
+        _;
     }
     
     // Initialize default token settings for UnityFinance presale
@@ -265,7 +286,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // ============ PURCHASE FUNCTIONS ============
     
     // Purchase with native currency (ETH on Ethereum, BNB on BSC)
-    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused {
+    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(msg.value > 0, "No native currency sent");
         require(presaleStartTime > 0, "Presale not started");
@@ -290,7 +311,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address token,
         uint256 amount,
         address beneficiary
-    ) public nonReentrant whenNotPaused {
+    ) public nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(amount > 0, "Invalid amount");
         require(token != NATIVE_ADDRESS, "Use buyWithNative for native currency");
@@ -731,8 +752,41 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         gasBuffer = _gasBuffer;
     }
     
+    // ============ KYC MANAGEMENT FUNCTIONS ============
+    
+    /// @notice Update the KYC contract address
+    /// @param _kycContract New KYC contract address
+    function updateKYCContract(address _kycContract) external onlyOwner {
+        require(_kycContract != address(0), "Invalid KYC contract");
+        address oldContract = address(kycContract);
+        kycContract = SimpleKYC(_kycContract);
+        emit KYCContractUpdated(oldContract, _kycContract);
+    }
+    
+    /// @notice Toggle KYC requirement on/off
+    /// @param _required Whether KYC is required
+    function setKYCRequired(bool _required) external onlyOwner {
+        kycRequired = _required;
+        emit KYCRequirementUpdated(_required);
+    }
+    
+    /// @notice Get KYC contract address and requirement status
+    /// @return kycAddress Address of the KYC contract
+    /// @return required Whether KYC is required
+    function getKYCInfo() external view returns (address kycAddress, bool required) {
+        kycAddress = address(kycContract);
+        required = kycRequired;
+    }
+    
+    /// @notice Check if a user is KYC verified
+    /// @param user Address to check
+    /// @return verified Whether the user is verified
+    function isUserKYCVerified(address user) external view returns (bool verified) {
+        return kycContract.isCurrentlyVerified(user);
+    }
+    
     // Alternative implementation with fixed gas buffer
-    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused {
+    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(msg.value > gasBuffer, "Insufficient payment after gas buffer");
         
