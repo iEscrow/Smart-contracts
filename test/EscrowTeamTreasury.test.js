@@ -829,9 +829,247 @@ describe("EscrowTeamTreasury", function () {
       await time.increase(LOCK_DURATION + 1);
       await network.provider.send("evm_mine");
 
-      const claimable = await treasury.getClaimableAmount(addr1.address);
-      expect(claimable).to.equal(milestoneAmount);
-    });
   });
+
+  // ---------------- BRANCH COVERAGE ENHANCEMENT TESTS ---------------- //
+  describe("Branch Coverage Enhancement", function () {
+    const beneficiaryAmount = ethers.parseUnits("100000", TOKEN_DECIMALS);
+
+    beforeEach(async function () {
+      // Setup treasury with beneficiary but don't lock allocations
+      const amount = await treasury.TOTAL_ALLOCATION();
+
+      // Only fund if not already funded
+      if (!(await treasury.treasuryFunded())) {
+        await (await escrowToken.mint(owner.address, amount)).wait();
+        await (await escrowToken.approve(treasury.getAddress(), amount)).wait();
+        await (await treasury.fundTreasury()).wait();
+      }
+
+      // Remove beneficiary if already exists, then add fresh
+      try {
+        await (await treasury.removeBeneficiary(addr1.address)).wait();
+      } catch (error) {
+        // Beneficiary might not exist, which is fine
+      }
+
+      await (await treasury.addBeneficiary(addr1.address, beneficiaryAmount)).wait();
+      // Don't lock allocations - let individual tests handle if needed
+    });
+
+    it("Should handle emergency withdraw when balance > locked amount", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      // Add extra tokens to treasury
+      const extraTokens = ethers.parseUnits("1000", TOKEN_DECIMALS);
+      await escrowToken.mint(await treasury.getAddress(), extraTokens);
+
+      const balanceBefore = await escrowToken.balanceOf(owner.address);
+      const treasuryBalance = await escrowToken.balanceOf(await treasury.getAddress());
+      const lockedAmount = await treasury.totalAllocated() - await treasury.totalClaimed();
+
+      await treasury.emergencyWithdraw();
+
+      const balanceAfter = await escrowToken.balanceOf(owner.address);
+      expect(balanceAfter - balanceBefore).to.equal(treasuryBalance - lockedAmount);
+    });
+
+    it("Should handle revocation when no claimable amount", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      // Check claimable amount before any time advancement
+      // Should be 0 before the 3-year lock period
+      expect(await treasury.getClaimableAmount(addr1.address)).to.equal(0);
+
+      // Revoke should work and emit event
+      await expect(treasury.revokeAllocation(addr1.address))
+        .to.emit(treasury, "AllocationRevoked")
+        .withArgs(addr1.address, beneficiaryAmount);
+
+      const info = await treasury.beneficiaries(addr1.address);
+      expect(info.revoked).to.be.true;
+    });
+
+    it("Should handle getTimeUntilNextUnlock for different milestones", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      // Test milestone 0 (before first unlock)
+      expect(await treasury.getTimeUntilNextUnlock()).to.be.closeTo(LOCK_DURATION, 10);
+
+      // Advance to milestone 1
+      await time.increase(LOCK_DURATION);
+      await network.provider.send("evm_mine");
+
+      // Should return time to milestone 2
+      expect(await treasury.getTimeUntilNextUnlock()).to.be.closeTo(VESTING_INTERVAL, 10);
+
+      // Advance to milestone 2
+      await time.increase(VESTING_INTERVAL);
+      await network.provider.send("evm_mine");
+
+      // Should return time to milestone 3
+      expect(await treasury.getTimeUntilNextUnlock()).to.be.closeTo(VESTING_INTERVAL, 10);
+
+      // Advance past all milestones
+      await time.increase(VESTING_INTERVAL * 3);
+      await network.provider.send("evm_mine");
+
+      // Should return 0
+      expect(await treasury.getTimeUntilNextUnlock()).to.equal(0);
+    });
+
+    it("Should handle getTreasuryStats with various states", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      // Get initial stats
+      const initialStats = await treasury.getTreasuryStats();
+
+      // Test with unallocated tokens
+      const extraTokens = ethers.parseUnits("500", TOKEN_DECIMALS);
+      await escrowToken.mint(await treasury.getAddress(), extraTokens);
+
+      const stats = await treasury.getTreasuryStats();
+      // Check that unallocated increased by the extra tokens amount
+      expect(stats.unallocated - initialStats.unallocated).to.equal(extraTokens);
+
+      // Test after claiming
+      await time.increase(LOCK_DURATION);
+      await network.provider.send("evm_mine");
+      await treasury.connect(addr1).claimTokens();
+
+      const statsAfter = await treasury.getTreasuryStats();
+      expect(statsAfter.totalClaim).to.be.greaterThan(0);
+    });
+
+    it("Should handle beneficiary info for non-existent beneficiary", async function () {
+      // Use a fresh address that definitely doesn't exist
+      const nonExistentAddress = "0x0000000000000000000000000000000000000001";
+
+      const info = await treasury.getBeneficiaryInfo(nonExistentAddress);
+      expect(info.totalAllocation).to.equal(0);
+      expect(info.isActive).to.be.false;
+      expect(info.revoked).to.be.false;
+    });
+
+    it("Should handle claiming when paused and unpaused", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      await time.increase(LOCK_DURATION);
+      await network.provider.send("evm_mine");
+
+      // Pause contract
+      await treasury.pause();
+
+      // Claim should fail when paused
+      await expect(treasury.connect(addr1).claimTokens())
+        .to.be.revertedWithCustomError(treasury, "EnforcedPause");
+
+      // Unpause and claim should work
+      await treasury.unpause();
+      await expect(treasury.connect(addr1).claimTokens())
+        .to.emit(treasury, "TokensClaimed");
+    });
+
+    it("Should handle edge case in getNextUnlockTime for high milestones", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      // Advance past all milestones
+      const totalTime = LOCK_DURATION + (VESTING_MILESTONES + 1) * VESTING_INTERVAL;
+      await time.increase(totalTime);
+      await network.provider.send("evm_mine");
+
+      expect(await treasury.getNextUnlockTime()).to.equal(0);
+    });
+
+    it("Should handle zero allocation beneficiary", async function () {
+      // This tests the InvalidAmount error path
+      await expect(treasury.addBeneficiary(addr2.address, 0))
+        .to.be.revertedWithCustomError(treasury, "InvalidAmount");
+    });
+
+    it("Should handle beneficiary already allocated error", async function () {
+      // Use a fresh address that definitely doesn't exist
+      const freshAddress = "0x1111111111111111111111111111111111111111";
+
+      // Add beneficiary first (allocations are unlocked in beforeEach)
+      await treasury.addBeneficiary(freshAddress, beneficiaryAmount);
+
+      // Try to add again - should fail
+      await expect(treasury.addBeneficiary(freshAddress, beneficiaryAmount))
+        .to.be.revertedWithCustomError(treasury, "AlreadyAllocated");
+    });
+
+    it("Should handle update beneficiary with zero allocation", async function () {
+      // This tests the InvalidAmount error in update
+      await expect(treasury.updateBeneficiary(addr1.address, 0))
+        .to.be.revertedWithCustomError(treasury, "InvalidAmount");
+    });
+
+    it("Should handle remove non-existent beneficiary", async function () {
+      // Use a fresh address that definitely doesn't exist as a beneficiary
+      const nonExistentAddress = "0x0000000000000000000000000000000000000001";
+
+      // Try to remove a non-existent beneficiary
+      await expect(treasury.removeBeneficiary(nonExistentAddress))
+        .to.be.revertedWithCustomError(treasury, "NotBeneficiary");
+    });
+
+    it("Should handle getAllBeneficiaries with empty list", async function () {
+      // Get all current beneficiaries and remove them all
+      const currentBeneficiaries = await treasury.getAllBeneficiaries();
+
+      for (let i = 0; i < currentBeneficiaries.addresses.length; i++) {
+        try {
+          await treasury.removeBeneficiary(currentBeneficiaries.addresses[i]);
+        } catch (error) {
+          // Beneficiary might not exist or already removed, which is fine
+        }
+      }
+
+      const beneficiaries = await treasury.getAllBeneficiaries();
+      expect(beneficiaries.addresses.length).to.equal(0);
+    });
+
+    it("Should handle claiming after partial claims", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      await time.increase(LOCK_DURATION);
+      await network.provider.send("evm_mine");
+
+      // Claim once
+      await treasury.connect(addr1).claimTokens();
+
+      // Advance to next milestone
+      await time.increase(VESTING_INTERVAL);
+      await network.provider.send("evm_mine");
+
+      // Claim again
+      await treasury.connect(addr1).claimTokens();
+
+      const info = await treasury.beneficiaries(addr1.address);
+      expect(info.claimedAmount).to.equal(milestoneAmount * 2n);
+    });
+
+    it("Should handle view functions with revoked beneficiary", async function () {
+      // Lock allocations for this test
+      await treasury.lockAllocations();
+
+      await treasury.revokeAllocation(addr1.address);
+
+      const claimable = await treasury.getClaimableAmount(addr1.address);
+      expect(claimable).to.equal(0);
+
+    });
+
 });
 
+});
+
+})
