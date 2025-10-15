@@ -99,7 +99,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     error TreasuryAlreadyFunded();
     error LockPeriodNotEnded();
     error NoTokensAvailable();
-    error AllocationRevoked();
+    error AllocationAlreadyRevoked();
     error InvalidMilestone();
     error InsufficientBalance();
     
@@ -243,7 +243,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         if (!beneficiaries[beneficiary].isActive) revert NotBeneficiary();
         
         Beneficiary storage b = beneficiaries[beneficiary];
-        if (b.revoked) revert AllocationRevoked();
+        if (b.revoked) revert AllocationAlreadyRevoked();
         
         // Calculate unvested amount
         uint256 vestedAmount = _calculateVestedAmount(beneficiary);
@@ -302,7 +302,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         if (!beneficiaries[msg.sender].isActive) revert NotBeneficiary();
         
         Beneficiary storage b = beneficiaries[msg.sender];
-        if (b.revoked) revert AllocationRevoked();
+        if (b.revoked) revert AllocationAlreadyRevoked();
         
         uint256 claimable = getClaimableAmount(msg.sender);
         if (claimable == 0) revert NoTokensAvailable();
@@ -326,7 +326,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         if (!beneficiaries[beneficiary].isActive) revert NotBeneficiary();
         
         Beneficiary storage b = beneficiaries[beneficiary];
-        if (b.revoked) revert AllocationRevoked();
+        if (b.revoked) revert AllocationAlreadyRevoked();
         
         uint256 claimable = getClaimableAmount(beneficiary);
         if (claimable == 0) revert NoTokensAvailable();
