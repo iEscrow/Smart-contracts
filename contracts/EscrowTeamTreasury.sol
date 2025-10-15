@@ -354,23 +354,26 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         Beneficiary memory b = beneficiaries[beneficiary];
         
         if (!b.isActive || b.revoked) return 0;
-        if (block.timestamp < firstUnlockTime) return 0;
         
         uint256 currentMilestone = _getCurrentMilestone();
         if (currentMilestone == 0) return 0;
         
-        // Each milestone unlocks 20%
+        // Each milestone unlocks 20% (milestone 1 = 20%, 2 = 40%, etc.)
         uint256 vestedPercentage = currentMilestone * PERCENTAGE_PER_MILESTONE;
         return (b.totalAllocation * vestedPercentage) / BASIS_POINTS;
     }
     
     /**
      * @notice Get current vesting milestone (0-5)
+     * @dev Milestone 0 = no vesting, 1 = 20% unlocked, 2 = 40%, etc.
      */
     function _getCurrentMilestone() internal view returns (uint256) {
         if (block.timestamp < firstUnlockTime) return 0;
         
         uint256 timeSinceFirstUnlock = block.timestamp - firstUnlockTime;
+        
+        if (timeSinceFirstUnlock == 0) return 1;
+        
         uint256 milestone = (timeSinceFirstUnlock / VESTING_INTERVAL) + 1;
         
         return milestone > VESTING_MILESTONES ? VESTING_MILESTONES : milestone;

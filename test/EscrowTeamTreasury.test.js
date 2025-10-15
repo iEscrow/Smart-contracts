@@ -214,14 +214,14 @@ describe("EscrowTeamTreasury", function () {
       
       await expect(treasury.connect(addr1).claimTokens())
         .to.emit(treasury, "TokensClaimed")
-        .withArgs(addr1.address, milestoneAmount, 1);
+        .withArgs(addr1.address, milestoneAmount, 1); // Milestone 1 = 20% unlocked
       
       const info = await treasury.beneficiaries(addr1.address);
       expect(info.claimedAmount).to.equal(milestoneAmount);
     });
 
     it("Should claim all milestones correctly", async function () {
-      // 5 milestones (0-4) after initial 3-year lock
+      // 5 milestones (1-5) after initial 3-year lock
       for (let i = 1; i <= 5; i++) {
         // Move to next milestone (3y + 6m * (i-1))
         await time.increase(i === 1 ? LOCK_DURATION : VESTING_INTERVAL);
