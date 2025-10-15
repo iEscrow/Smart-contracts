@@ -199,6 +199,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Remove beneficiary (only before locking)
      * @param beneficiary Beneficiary address
+     * @dev Optimized for gas: uses unchecked operations and efficient array swap
      */
     function removeBeneficiary(address beneficiary) external onlyOwner {
         if (allocationsLocked) revert AllocationsAlreadyLocked();
@@ -210,13 +211,16 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         b.isActive = false;
         totalAllocated -= allocation;
         
-        // Remove from list
-        for (uint256 i = 0; i < beneficiaryList.length; i++) {
+        // Remove from list - optimized gas: use unchecked for known safe operations
+        uint256 length = beneficiaryList.length;
+        for (uint256 i = 0; i < length; ) {
             if (beneficiaryList[i] == beneficiary) {
-                beneficiaryList[i] = beneficiaryList[beneficiaryList.length - 1];
+                // Swap with last element and pop (more gas efficient than shifting)
+                beneficiaryList[i] = beneficiaryList[length - 1];
                 beneficiaryList.pop();
                 break;
             }
+            unchecked { i++; } // Gas optimization: unchecked increment
         }
         
         emit BeneficiaryRemoved(beneficiary, allocation);
@@ -435,6 +439,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     
     /**
      * @notice Get all beneficiaries
+     * @dev Optimized for gas: uses unchecked operations where safe
      */
     function getAllBeneficiaries() 
         external 
@@ -452,7 +457,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         claimed = new uint256[](count);
         active = new bool[](count);
         
-        for (uint256 i = 0; i < count; i++) {
+        for (uint256 i = 0; i < count; ) {
             address beneficiary = beneficiaryList[i];
             Beneficiary memory b = beneficiaries[beneficiary];
             
@@ -460,6 +465,8 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
             allocations[i] = b.totalAllocation;
             claimed[i] = b.claimedAmount;
             active[i] = b.isActive && !b.revoked;
+            
+            unchecked { i++; } // Gas optimization: unchecked increment
         }
         
         return (addresses, allocations, claimed, active);

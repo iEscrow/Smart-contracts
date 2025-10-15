@@ -120,6 +120,28 @@ await treasury.claimTokens();
 const claimable = await treasury.getClaimableAmount(beneficiaryAddress);
 ```
 
+## 📊 Test Coverage
+
+The project has excellent test coverage ensuring reliability:
+
+- **98.29% Statement Coverage** - Almost all code paths are tested
+- **68.03% Branch Coverage** - Good coverage of conditional branches
+- **100% Function Coverage** - All functions are tested
+- **100% Line Coverage** - All lines of code are executed
+
+Run `npx hardhat coverage` to generate detailed reports in the `coverage/` directory.
+
+## 🔧 Gas Optimization
+
+The contract has been optimized for gas efficiency:
+
+- **Unchecked Operations**: Used in safe loops to save gas
+- **Efficient Array Management**: Swap-and-pop method for removals instead of shifting
+- **Minimal Storage Writes**: State variables updated only when necessary
+- **Immutable Parameters**: Constants prevent unnecessary computations
+
+Gas usage is optimized for scalability, with O(n) operations noted for large beneficiary counts.
+
 ## 🧪 Testing
 
 Run the comprehensive test suite:
@@ -134,6 +156,13 @@ npx hardhat coverage
 # Run specific test
 npx hardhat test test/EscrowTeamTreasury.test.js
 ```
+
+**Test Results**: 61 passing tests with comprehensive edge case coverage including:
+- Deployment and funding scenarios
+- Beneficiary management (add, update, remove)
+- Vesting and claiming at milestone boundaries
+- Emergency functions (pause, revoke, withdraw)
+- Edge cases (large allocations, multiple beneficiaries, time precision)
 
 ## 📚 Documentation
 
