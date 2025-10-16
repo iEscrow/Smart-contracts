@@ -2,11 +2,17 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "./SimpleKYC.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
+    
+    // Gas buffer for native currency purchases
+    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
     
     // Token price structure
     struct TokenPrice {
@@ -20,6 +26,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     uint256 public presaleRate;  // Tokens per USD (18 decimals)
     uint256 public maxTokensToMint;
     uint256 public totalTokensMinted;
+    
+    // KYC integration
+    SimpleKYC public kycContract;
+    bool public kycRequired = true; // KYC is required by default
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -37,6 +47,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     uint256 public presaleEndTime;
     bool public presaleEnded;
     
+    // Scheduled launch and two rounds
+    uint256 public constant PRESALE_LAUNCH_DATE = 1762819200; // Nov 11, 2025 00:00 UTC
+    uint256 public constant MAX_PRESALE_DURATION = 34 days;
+    uint256 public constant ROUND1_DURATION = 23 days;
+    uint256 public constant ROUND2_DURATION = 11 days;
+    
+    uint256 public currentRound = 0; // 0 = not started, 1 = round 1, 2 = round 2
+    uint256 public round1EndTime;
+    uint256 public round1TokensSold;
+    uint256 public round2TokensSold;
+    
     // Constants
     address public constant NATIVE_ADDRESS = address(0); // ETH on Ethereum
     uint256 public constant USD_DECIMALS = 8;
@@ -46,7 +67,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     address public constant WBNB_ADDRESS = 0x418D75f65a02b3D53B2418FB8E1fe493759c7605;
     address public constant LINK_ADDRESS = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
     address public constant WBTC_ADDRESS = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address public constant USDC_ADDRESS = 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48; 
+    address public constant USDC_ADDRESS = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant USDT_ADDRESS = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     
     // Events
@@ -63,22 +84,44 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event TokenStatusUpdated(address indexed token, bool isActive);
     event PresaleStarted(uint256 startTime, uint256 endTime);
     event PresaleEnded(uint256 endTime);
+    event PresaleEndedEarly(string reason, uint256 endTime);
+    event RoundAdvanced(uint256 fromRound, uint256 toRound, uint256 timestamp);
+    event EmergencyEnd(uint256 timestamp);
+    event AutoStartTriggered(uint256 timestamp);
+    event KYCContractUpdated(address indexed oldContract, address indexed newContract);
+    event KYCRequirementUpdated(bool required);
+    event GasBufferUpdated(uint256 oldBuffer, uint256 newBuffer);
+    event MaxPurchasePerUserUpdated(uint256 oldMax, uint256 newMax);
     
     constructor(
         address _presaleToken,
         uint256 _presaleRate, // 0.0015 dollar per token && presaleRate = 666666666666666666; // 666.666... with 18 decimals
-        uint256 _maxTokensToMint // 5 billion tokens to presale
-    ) {
+        uint256 _maxTokensToMint, // 5 billion tokens to presale
+        address _kycContract
+    ) Ownable(msg.sender) {
         require(_presaleToken != address(0), "Invalid presale token");
         require(_presaleRate > 0, "Invalid presale rate");
         require(_maxTokensToMint > 0, "Invalid max tokens");
+        require(_kycContract != address(0), "Invalid KYC contract");
         
         presaleToken = IERC20(_presaleToken);
         presaleRate = _presaleRate;
         maxTokensToMint = _maxTokensToMint;
+        kycContract = SimpleKYC(_kycContract);
         
         // Initialize default token prices and limits
         _initializeDefaultTokens();
+    }
+    
+    // ============ MODIFIERS ============
+    
+    /// @notice Modifier to check if KYC is verified for the beneficiary
+    /// @param beneficiary Address to check KYC status for
+    modifier onlyKYCVerified(address beneficiary) {
+        if (kycRequired) {
+            require(kycContract.isCurrentlyVerified(beneficiary), "KYC verification required");
+        }
+        _;
     }
     
     // Initialize default token settings for UnityFinance presale
@@ -134,9 +177,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // Set total USD limit per user to $10,000 (all tokens combined)
         maxTotalPurchasePerUser = 10000 * 1e8; // $10,000 total
-        
-        // Set gas buffer for Ethereum (0.0005 ETH)
-        gasBuffer = 0.0005 ether;
     }
     
     // ============ PRICE MANAGEMENT ============
@@ -159,17 +199,44 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit PriceUpdated(token, priceUSD);
         emit TokenStatusUpdated(token, isActive);
     }
-        
-    function setMaxTotalPurchasePerUser(uint256 maxUSDValue) external onlyOwner {
-        maxTotalPurchasePerUser = maxUSDValue;
-    }
     
     // Presale timing controls
     function startPresale(uint256 _duration) external onlyOwner {
         require(presaleStartTime == 0, "Presale already started");
+        require(_duration == MAX_PRESALE_DURATION, "Duration must match schedule");
+        require(
+            presaleToken.balanceOf(address(this)) >= maxTokensToMint,
+            "Insufficient presale tokens in contract"
+        );
+
         presaleStartTime = block.timestamp;
+        round1EndTime = block.timestamp + ROUND1_DURATION;
         presaleEndTime = block.timestamp + _duration;
+        currentRound = 1;
+        presaleEnded = false;
+
         emit PresaleStarted(presaleStartTime, presaleEndTime);
+        emit RoundAdvanced(0, 1, block.timestamp);
+    }
+    
+    // Auto-start presale on November 11, 2025 - Anyone can trigger
+    function autoStartIEscrowPresale() external {
+        require(presaleStartTime == 0, "Presale already started");
+        require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
+        
+        // Verify contract has enough presale tokens (5B $ESCROW)
+        uint256 contractBalance = presaleToken.balanceOf(address(this));
+        require(contractBalance >= maxTokensToMint, "Insufficient presale tokens in contract");
+        
+        // Start Round 1
+        presaleStartTime = block.timestamp;
+        round1EndTime = block.timestamp + ROUND1_DURATION;
+        presaleEndTime = block.timestamp + MAX_PRESALE_DURATION;
+        currentRound = 1;
+        
+        emit PresaleStarted(presaleStartTime, presaleEndTime);
+        emit AutoStartTriggered(block.timestamp);
+        emit RoundAdvanced(0, 1, block.timestamp);
     }
     
     function endPresale() external onlyOwner {
@@ -184,13 +251,42 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function extendPresale(uint256 _additionalDuration) external onlyOwner {
         require(presaleStartTime > 0, "Presale not started");
         require(!presaleEnded, "Presale already ended");
-        presaleEndTime += _additionalDuration;
+        require(_additionalDuration <= 7 days, "Cannot extend more than 7 days");
+        uint256 newEnd = presaleEndTime + _additionalDuration;
+        require(
+            newEnd <= presaleStartTime + MAX_PRESALE_DURATION,
+            "Cannot extend beyond max duration"
+        );
+        presaleEndTime = newEnd;
+    }
+    
+    // Emergency end presale immediately
+    function emergencyEndPresale() external onlyOwner {
+        require(presaleStartTime > 0, "Presale not started");
+        require(!presaleEnded, "Presale already ended");
+        
+        presaleEnded = true;
+        presaleEndTime = block.timestamp;
+        
+        emit EmergencyEnd(block.timestamp);
+        emit PresaleEnded(presaleEndTime);
+    }
+    
+    // Manually advance from Round 1 to Round 2
+    function moveToRound2() external onlyOwner {
+        require(currentRound == 1, "Not in round 1");
+        require(!presaleEnded, "Presale already ended");
+        
+        currentRound = 2;
+        round1EndTime = block.timestamp;
+        
+        emit RoundAdvanced(1, 2, block.timestamp);
     }
     
     // ============ PURCHASE FUNCTIONS ============
     
     // Purchase with native currency (ETH on Ethereum, BNB on BSC)
-    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused {
+    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(msg.value > 0, "No native currency sent");
         require(presaleStartTime > 0, "Presale not started");
@@ -215,7 +311,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address token,
         uint256 amount,
         address beneficiary
-    ) public nonReentrant whenNotPaused {
+    ) public nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(amount > 0, "Invalid amount");
         require(token != NATIVE_ADDRESS, "Use buyWithNative for native currency");
@@ -228,9 +324,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         TokenPrice memory tokenPrice = tokenPrices[token];
         require(tokenPrice.isActive, "Token not accepted");
         
-        // Check allowance and transfer tokens
-        IERC20 tokenContract = IERC20(token);
-        tokenContract.transferFrom(msg.sender, address(this), amount);
+        // Check allowance and transfer tokens (SafeERC20 handles USDT compatibility)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         
         uint256 tokenAmount = _calculateTokenAmount(token, amount, beneficiary);
         _processPurchase(beneficiary, token, amount, tokenAmount);
@@ -263,16 +358,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ INTERNAL FUNCTIONS ============
     
-    function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal view returns (uint256) {
+    function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
         
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
 
+        // Track USD spent for analytics (no limit enforced)
         totalUsdPurchased[beneficiary] += usdValue * 1e8;
-        require(totalUsdPurchased[beneficiary] <= maxTotalPurchasePerUser, "Exceeds max user USD limit");
-        // Calculate presale tokens
+        
+        // Calculate presale tokens (limit enforced at total token level in _processPurchase)
         return (usdValue * presaleRate) ;
     }
     
@@ -290,12 +386,50 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         totalPurchased[beneficiary] += tokenAmount;
         totalTokensMinted += tokenAmount;
         
+        // Track tokens sold per round
+        if (currentRound == 1) {
+            round1TokensSold += tokenAmount;
+        } else if (currentRound == 2) {
+            round2TokensSold += tokenAmount;
+        }
+        
         emit TokenPurchase(msg.sender, beneficiary, paymentToken, paymentAmount, tokenAmount);
+        
+        // Check auto-end conditions
+        _checkAutoEndConditions();
+    }
+    
+    // Check if presale should auto-end
+    function _checkAutoEndConditions() internal {
+        // End if all tokens sold
+        if (totalTokensMinted >= maxTokensToMint) {
+            presaleEnded = true;
+            presaleEndTime = block.timestamp;
+            emit PresaleEndedEarly("All tokens sold", block.timestamp);
+            emit PresaleEnded(block.timestamp);
+            return;
+        }
+        
+        // End if 34 days passed
+        if (block.timestamp >= presaleStartTime + MAX_PRESALE_DURATION) {
+            presaleEnded = true;
+            presaleEndTime = block.timestamp;
+            emit PresaleEndedEarly("Maximum duration reached", block.timestamp);
+            emit PresaleEnded(block.timestamp);
+            return;
+        }
+        
+        // Auto-advance from Round 1 to Round 2 if Round 1 time is up
+        if (currentRound == 1 && block.timestamp >= round1EndTime) {
+            currentRound = 2;
+            round1EndTime = block.timestamp; // Mark actual end time
+            emit RoundAdvanced(1, 2, block.timestamp);
+        }
     }
     
     // ============ CLAIM FUNCTIONS ============
     
-    function claimTokens() external nonReentrant {
+    function claimTokens() external nonReentrant whenNotPaused {
         require(totalPurchased[msg.sender] > 0, "No tokens to claim");
         require(!hasClaimed[msg.sender], "Already claimed");
         require(presaleEnded, "Presale not ended yet");
@@ -303,7 +437,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 claimAmount = totalPurchased[msg.sender];
         hasClaimed[msg.sender] = true;
         
-        require(presaleToken.transfer(msg.sender, claimAmount), "Transfer failed");
+        presaleToken.safeTransfer(msg.sender, claimAmount);
         
         emit TokensClaimed(msg.sender, claimAmount);
     }
@@ -317,10 +451,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function withdrawToken(address token) external onlyOwner {
-        IERC20 tokenContract = IERC20(token);
-        uint256 balance = tokenContract.balanceOf(address(this));
+        require(token != address(presaleToken), "Cannot withdraw presale tokens directly");
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
         require(balance > 0, "No tokens to withdraw");
-        require(tokenContract.transfer(owner(), balance), "Transfer failed");
+        IERC20(token).safeTransfer(owner(), balance);
     }
     
     function pause() external onlyOwner {
@@ -348,7 +483,15 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) external view returns (uint256) {
-        return _calculateTokenAmount(paymentToken, paymentAmount, beneficiary);
+        TokenPrice memory price = tokenPrices[paymentToken];
+        require(price.isActive, "Token not accepted");
+        
+        // Convert payment amount to USD value
+        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        
+        // No per-user limit - only total token supply limit enforced
+        // Calculate presale tokens
+        return (usdValue * presaleRate);
     }
     
     function getRemainingTokens() external view returns (uint256) {
@@ -379,6 +522,101 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     function canClaim() external view returns (bool) {
         return presaleEnded;
+    }
+    
+    // Get comprehensive presale status
+    function getIEscrowPresaleStatus() external view returns (
+        uint256 currentRoundNumber,
+        uint256 roundTimeRemaining,
+        uint256 totalTimeRemaining,
+        uint256 tokensRemainingTotal,
+        uint256 round1Sold,
+        uint256 round2Sold,
+        bool canPurchase,
+        string memory statusMessage
+    ) {
+        currentRoundNumber = currentRound;
+        round1Sold = round1TokensSold;
+        round2Sold = round2TokensSold;
+        tokensRemainingTotal = maxTokensToMint - totalTokensMinted;
+        
+        if (presaleEnded) {
+            canPurchase = false;
+            statusMessage = "Presale ended";
+            roundTimeRemaining = 0;
+            totalTimeRemaining = 0;
+        } else if (currentRound == 0) {
+            canPurchase = false;
+            statusMessage = "Presale starts Nov 11, 2025";
+            roundTimeRemaining = block.timestamp >= PRESALE_LAUNCH_DATE ? 0 : PRESALE_LAUNCH_DATE - block.timestamp;
+            totalTimeRemaining = roundTimeRemaining;
+        } else if (currentRound == 1) {
+            canPurchase = true;
+            statusMessage = "Round 1 Active";
+            roundTimeRemaining = block.timestamp >= round1EndTime ? 0 : round1EndTime - block.timestamp;
+            totalTimeRemaining = block.timestamp >= presaleEndTime ? 0 : presaleEndTime - block.timestamp;
+        } else if (currentRound == 2) {
+            canPurchase = true;
+            statusMessage = "Round 2 Active";
+            roundTimeRemaining = block.timestamp >= presaleEndTime ? 0 : presaleEndTime - block.timestamp;
+            totalTimeRemaining = roundTimeRemaining;
+        }
+        
+        return (currentRoundNumber, roundTimeRemaining, totalTimeRemaining, tokensRemainingTotal, round1Sold, round2Sold, canPurchase, statusMessage);
+    }
+    
+    // Get round allocation details
+    function getRoundAllocation() external view returns (
+        uint256 round1Sold,
+        uint256 round2Sold,
+        uint256 round1Remaining,
+        uint256 round2Remaining,
+        uint256 totalRemaining
+    ) {
+        round1Sold = round1TokensSold;
+        round2Sold = round2TokensSold;
+        totalRemaining = maxTokensToMint - totalTokensMinted;
+        
+        // For display purposes - no hard limits per round in iEscrow spec
+        round1Remaining = totalRemaining;
+        round2Remaining = totalRemaining;
+        
+        return (round1Sold, round2Sold, round1Remaining, round2Remaining, totalRemaining);
+    }
+    
+    // Validate contract setup before launch
+    function validateIEscrowSetup() external view returns (
+        bool hasCorrectTokens,
+        bool startDateConfigured,
+        bool limitsConfigured,
+        bool tokensDeposited,
+        string memory issues
+    ) {
+        hasCorrectTokens = true; // All 7 tokens configured in constructor
+        startDateConfigured = PRESALE_LAUNCH_DATE == 1762819200; // Nov 11, 2025
+        limitsConfigured = maxTokensToMint == 5000000000 * 1e18; // 5B tokens
+        
+        uint256 contractBalance = presaleToken.balanceOf(address(this));
+        tokensDeposited = contractBalance >= maxTokensToMint;
+        
+        if (!tokensDeposited) {
+            issues = "Insufficient ESCROW tokens in contract";
+        } else if (!startDateConfigured) {
+            issues = "Incorrect start date";
+        } else if (!limitsConfigured) {
+            issues = "Incorrect token limits";
+        } else {
+            issues = "Setup validated - ready for launch";
+        }
+        
+        return (hasCorrectTokens, startDateConfigured, limitsConfigured, tokensDeposited, issues);
+    }
+    
+    // Anyone can call to trigger auto-end checks
+    function checkAutoEndConditions() external {
+        require(presaleStartTime > 0, "Presale not started");
+        require(!presaleEnded, "Presale already ended");
+        _checkAutoEndConditions();
     }
     
     // Helper functions for USD value calculations
@@ -508,15 +746,47 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         return baseGas + storageGas + calculationGas + eventGas;
     }
     
-    // Alternative: Allow admin to set gas buffer
-    uint256 public gasBuffer = 0.01 ether; // Default 0.01 ETH buffer
-    
     function setGasBuffer(uint256 _gasBuffer) external onlyOwner {
+        uint256 oldBuffer = gasBuffer;
         gasBuffer = _gasBuffer;
+        emit GasBufferUpdated(oldBuffer, _gasBuffer);
+    }
+    
+    // ============ KYC MANAGEMENT FUNCTIONS ============
+    
+    /// @notice Update the KYC contract address
+    /// @param _kycContract New KYC contract address
+    function updateKYCContract(address _kycContract) external onlyOwner {
+        require(_kycContract != address(0), "Invalid KYC contract");
+        address oldContract = address(kycContract);
+        kycContract = SimpleKYC(_kycContract);
+        emit KYCContractUpdated(oldContract, _kycContract);
+    }
+    
+    /// @notice Toggle KYC requirement on/off
+    /// @param _required Whether KYC is required
+    function setKYCRequired(bool _required) external onlyOwner {
+        kycRequired = _required;
+        emit KYCRequirementUpdated(_required);
+    }
+    
+    /// @notice Get KYC contract address and requirement status
+    /// @return kycAddress Address of the KYC contract
+    /// @return required Whether KYC is required
+    function getKYCInfo() external view returns (address kycAddress, bool required) {
+        kycAddress = address(kycContract);
+        required = kycRequired;
+    }
+    
+    /// @notice Check if a user is KYC verified
+    /// @param user Address to check
+    /// @return verified Whether the user is verified
+    function isUserKYCVerified(address user) external view returns (bool verified) {
+        return kycContract.isCurrentlyVerified(user);
     }
     
     // Alternative implementation with fixed gas buffer
-    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused {
+    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(msg.value > gasBuffer, "Insufficient payment after gas buffer");
         
