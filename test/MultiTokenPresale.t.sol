@@ -42,8 +42,8 @@ contract MultiTokenPresaleTest is Test {
     uint256 mainnetFork;
     
     function setUp() public {
-        // Fork mainnet
-        string memory rpcUrl = vm.envOr("RPC_URL", string("https://eth-mainnet.alchemyapi.io/v2/demo"));
+        // Fork mainnet - using NodeReal free RPC
+        string memory rpcUrl = vm.envOr("RPC_URL", string("https://eth-mainnet.nodereal.io/v1/demo"));
         mainnetFork = vm.createFork(rpcUrl, 20765000); // Stable recent block
         vm.selectFork(mainnetFork);
         
@@ -274,45 +274,58 @@ contract MultiTokenPresaleTest is Test {
         assertGt(amounts[5], 0, "USDC purchase not tracked"); // USDC
     }
     
-    // ============ USD LIMIT ENFORCEMENT TESTS ============
+    // ============ TOTAL TOKEN LIMIT ENFORCEMENT TESTS ============
     
-    function test_USDLimitEnforcement() public {
+    function test_TotalTokenLimitEnforcement() public {
         presale.startPresale(MAX_PRESALE_DURATION);
         
-        // Try to purchase more than $10k limit with ETH
-        // At $4200 per ETH, 2.5 ETH = $10,500
-        uint256 excessiveAmount = 2.5 ether;
+        // Calculate how much ETH needed to buy close to 5B tokens
+        // At $4200 per ETH and 0.667 tokens per USD:
+        // 5B tokens / 0.667 = ~7.5B USD needed
+        // 7.5B USD / $4200 per ETH = ~1.78M ETH
+        
+        // We can't actually buy all 5B in tests, so we'll test the logic:
+        // 1. Buy some tokens
+        // 2. Verify remaining tokens decreases
+        // 3. Verify total doesn't exceed 5B
         
         vm.prank(buyer1);
-        vm.expectRevert("Exceeds max user USD limit");
-        presale.buyWithNative{value: excessiveAmount}(buyer1);
+        presale.buyWithNative{value: 100 ether}(buyer1);
+        
+        uint256 remaining = presale.getRemainingTokens();
+        uint256 minted = presale.totalTokensMinted();
+        
+        assertGt(minted, 0, "Tokens should have been minted");
+        assertEq(remaining + minted, MAX_TOKENS, "Total should equal max tokens");
+        assertLt(minted, MAX_TOKENS, "Should not exceed max tokens");
     }
     
-    function test_USDLimitAcrossMultipleTokens() public {
+    function test_UnlimitedPerUserPurchases() public {
         presale.startPresale(MAX_PRESALE_DURATION);
         
+        // User should be able to buy way more than previous $10k limit
+        // Buy with multiple large purchases
         vm.startPrank(buyer1);
         
-        // Buy $5000 worth of ETH (about 1.19 ETH at $4200)
-        uint256 eth1 = 1.19 ether;
-        presale.buyWithNative{value: eth1}(buyer1);
+        // Purchase 1: Large ETH purchase (~$42,000 worth)
+        uint256 largeEth = 10 ether;
+        presale.buyWithNative{value: largeEth}(buyer1);
         
-        // Buy $4000 USDC
-        uint256 usdc1 = 4000 * 1e6;
-        usdc.approve(address(presale), usdc1);
-        presale.buyWithUSDC(usdc1, buyer1);
-        
-        // Try to buy $2000 more USDC (should fail - would exceed $10k total)
-        uint256 usdc2 = 2000 * 1e6;
-        usdc.approve(address(presale), usdc2);
-        vm.expectRevert("Exceeds max user USD limit");
-        presale.buyWithUSDC(usdc2, buyer1);
+        // Purchase 2: Large USDC purchase ($50,000)
+        uint256 largeUSDC = 50000 * 1e6;
+        usdc.approve(address(presale), largeUSDC);
+        presale.buyWithUSDC(largeUSDC, buyer1);
         
         vm.stopPrank();
         
-        // Verify total USD spent is close to $9000
+        // Verify total USD spent is > $10k (old limit)
         uint256 totalUSD = presale.getUserTotalUSDValue(buyer1);
-        assertApproxEqRel(totalUSD, 9000 * 1e8, 0.1e18, "USD tracking across tokens incorrect");
+        assertGt(totalUSD, 10000 * 1e8, "Should exceed old $10k limit");
+        assertGt(totalUSD, 90000 * 1e8, "Should have purchased >$90k worth");
+        
+        // Verify user has corresponding tokens
+        (, uint256 userTokens,) = presale.getUserPurchases(buyer1);
+        assertGt(userTokens, 0, "User should have tokens");
     }
     
     // ============ EARLY CLAIMING PREVENTION TESTS ============
@@ -586,27 +599,100 @@ contract MultiTokenPresaleTest is Test {
     }
     
     function test_MaxTokensReachedAutoEnd() public {
-        // Test with a smaller scope - just verify the auto-end logic triggers
-        // when tokens are theoretically exhausted (simulate with small purchase)
         presale.startPresale(MAX_PRESALE_DURATION);
         
         // Make a small purchase first
         vm.prank(buyer1);
         presale.buyWithNative{value: 1 ether}(buyer1);
         
-        // Check that the auto-end condition check works by verifying remaining tokens
+        // Check that tokens were minted and remaining decreased
         uint256 remaining = presale.getRemainingTokens();
+        uint256 minted = presale.totalTokensMinted();
+        
+        assertGt(minted, 0, "Tokens should have been minted");
         assertLt(remaining, MAX_TOKENS, "Some tokens should have been purchased");
         
-        // Verify the presale is still active (hasn't auto-ended)
+        // Verify arithmetic: remaining + minted = MAX_TOKENS
+        assertEq(remaining + minted, MAX_TOKENS, "Total accounting should be correct");
+        
+        // Verify the presale is still active (hasn't auto-ended yet)
         assertFalse(presale.presaleEnded(), "Presale should still be active");
         assertTrue(presale.isPresaleActive(), "Presale should be active");
+    }
+    
+    function test_CannotExceed5BillionTokenLimit() public {
+        // Deploy a new presale with much smaller token limit for testing
+        MockERC20 testToken = new MockERC20("Test", "TEST", 18, 100_000 ether);
+        SimpleKYC testKYC = new SimpleKYC(makeAddr("signer"));
+        
+        // Create presale with only 1000 tokens max (easier to test)
+        MultiTokenPresale testPresale = new MultiTokenPresale(
+            address(testToken),
+            PRESALE_RATE,
+            1000 ether, // Only 1000 tokens available
+            address(testKYC)
+        );
+        
+        // Transfer tokens to presale
+        testToken.transfer(address(testPresale), 1000 ether);
+        
+        // Disable KYC for testing
+        testPresale.setKYCRequired(false);
+        
+        // Start presale
+        testPresale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Buy tokens to fill the presale
+        // At 0.667 tokens per USD, we need ~1500 USD to get ~1000 tokens
+        uint256 usdcAmount = 1600 * 1e6; // Buy with 1600 USDC (more than needed)
+        
+        // Give buyer1 enough USDC
+        _dealToken(USDC_ADDRESS, buyer1, usdcAmount);
+        
+        // Buy tokens - should stop at 1000 token limit
+        vm.startPrank(buyer1);
+        usdc.approve(address(testPresale), usdcAmount);
+        
+        // This should fail because it would exceed the 1000 token limit
+        vm.expectRevert("Not enough tokens left");
+        testPresale.buyWithUSDC(usdcAmount, buyer1);
+        vm.stopPrank();
+        
+        // Now buy exact amount that won't exceed limit
+        // 1000 tokens / 0.667 = ~1500 USD
+        uint256 exactAmount = 1500 * 1e6;
+        _dealToken(USDC_ADDRESS, buyer2, exactAmount);
+        
+        vm.startPrank(buyer2);
+        usdc.approve(address(testPresale), exactAmount);
+        testPresale.buyWithUSDC(exactAmount, buyer2);
+        vm.stopPrank();
+        
+        // Verify close to all tokens were minted (within rounding)
+        uint256 totalMinted = testPresale.totalTokensMinted();
+        assertGt(totalMinted, 999 ether, "Should have minted close to 1000 tokens");
+        assertLt(totalMinted, 1001 ether, "Should not exceed 1000 tokens");
+        
+        // Verify remaining is very small
+        uint256 remaining = testPresale.getRemainingTokens();
+        assertLt(remaining, 1 ether, "Should have very little remaining");
+        
+        // Try one more small purchase - should fail if we're at/near limit
+        _dealToken(USDC_ADDRESS, buyer3, 100 * 1e6);
+        vm.startPrank(buyer3);
+        usdc.approve(address(testPresale), 100 * 1e6);
+        vm.expectRevert("Not enough tokens left");
+        testPresale.buyWithUSDC(100 * 1e6, buyer3);
+        vm.stopPrank();
     }
     
     // ============ EDGE CASE TESTS ============
     
     function test_GasBurnerProtection() public {
         presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Set realistic gas price for test (50 gwei)
+        vm.txGasPrice(50 gwei);
         
         // Test that gas buffer is properly deducted
         // Use an extremely small amount that will definitely fail after gas estimation

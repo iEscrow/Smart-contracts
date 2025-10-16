@@ -2,12 +2,14 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./SimpleKYC.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
     
     // Gas buffer for native currency purchases
     uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
@@ -88,6 +90,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event AutoStartTriggered(uint256 timestamp);
     event KYCContractUpdated(address indexed oldContract, address indexed newContract);
     event KYCRequirementUpdated(bool required);
+    event GasBufferUpdated(uint256 oldBuffer, uint256 newBuffer);
+    event MaxPurchasePerUserUpdated(uint256 oldMax, uint256 newMax);
     
     constructor(
         address _presaleToken,
@@ -194,10 +198,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         emit PriceUpdated(token, priceUSD);
         emit TokenStatusUpdated(token, isActive);
-    }
-        
-    function setMaxTotalPurchasePerUser(uint256 maxUSDValue) external onlyOwner {
-        maxTotalPurchasePerUser = maxUSDValue;
     }
     
     // Presale timing controls
@@ -324,9 +324,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         TokenPrice memory tokenPrice = tokenPrices[token];
         require(tokenPrice.isActive, "Token not accepted");
         
-        // Check allowance and transfer tokens
-        IERC20 tokenContract = IERC20(token);
-        tokenContract.transferFrom(msg.sender, address(this), amount);
+        // Check allowance and transfer tokens (SafeERC20 handles USDT compatibility)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         
         uint256 tokenAmount = _calculateTokenAmount(token, amount, beneficiary);
         _processPurchase(beneficiary, token, amount, tokenAmount);
@@ -366,9 +365,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
 
+        // Track USD spent for analytics (no limit enforced)
         totalUsdPurchased[beneficiary] += usdValue * 1e8;
-        require(totalUsdPurchased[beneficiary] <= maxTotalPurchasePerUser, "Exceeds max user USD limit");
-        // Calculate presale tokens
+        
+        // Calculate presale tokens (limit enforced at total token level in _processPurchase)
         return (usdValue * presaleRate) ;
     }
     
@@ -429,7 +429,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ CLAIM FUNCTIONS ============
     
-    function claimTokens() external nonReentrant {
+    function claimTokens() external nonReentrant whenNotPaused {
         require(totalPurchased[msg.sender] > 0, "No tokens to claim");
         require(!hasClaimed[msg.sender], "Already claimed");
         require(presaleEnded, "Presale not ended yet");
@@ -437,7 +437,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 claimAmount = totalPurchased[msg.sender];
         hasClaimed[msg.sender] = true;
         
-        require(presaleToken.transfer(msg.sender, claimAmount), "Transfer failed");
+        presaleToken.safeTransfer(msg.sender, claimAmount);
         
         emit TokensClaimed(msg.sender, claimAmount);
     }
@@ -451,10 +451,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function withdrawToken(address token) external onlyOwner {
-        IERC20 tokenContract = IERC20(token);
-        uint256 balance = tokenContract.balanceOf(address(this));
+        require(token != address(presaleToken), "Cannot withdraw presale tokens directly");
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
         require(balance > 0, "No tokens to withdraw");
-        require(tokenContract.transfer(owner(), balance), "Transfer failed");
+        IERC20(token).safeTransfer(owner(), balance);
     }
     
     function pause() external onlyOwner {
@@ -488,10 +489,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
         
-        // Check if purchase would exceed limit (for simulation only)
-        uint256 newTotalUsd = totalUsdPurchased[beneficiary] + (usdValue * 1e8);
-        require(newTotalUsd <= maxTotalPurchasePerUser, "Would exceed max user USD limit");
-        
+        // No per-user limit - only total token supply limit enforced
         // Calculate presale tokens
         return (usdValue * presaleRate);
     }
@@ -749,7 +747,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function setGasBuffer(uint256 _gasBuffer) external onlyOwner {
+        uint256 oldBuffer = gasBuffer;
         gasBuffer = _gasBuffer;
+        emit GasBufferUpdated(oldBuffer, _gasBuffer);
     }
     
     // ============ KYC MANAGEMENT FUNCTIONS ============
