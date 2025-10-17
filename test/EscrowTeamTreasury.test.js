@@ -122,47 +122,58 @@ describe("EscrowTeamTreasury", function () {
       // Note: Beneficiaries are pre-allocated, so use them for tests
     });
 
-    // Skip tests that add beneficiaries dynamically
-    // it("Should add beneficiary successfully", async function () {
-    //   await expect(treasury.addBeneficiary(addr1.address, beneficiaryAmount))
-    //     .to.emit(treasury, "BeneficiaryAdded")
-    //     .withArgs(addr1.address, beneficiaryAmount);
-    // });
+    it("Should add beneficiary successfully", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      await expect(treasury.addBeneficiary(addr1.address, beneficiaryAmount))
+        .to.emit(treasury, "BeneficiaryAdded")
+        .withArgs(addr1.address, beneficiaryAmount);
+    });
 
-    // it("Should revert if adding same beneficiary twice", async function () {
-    //   await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
-    //   await expect(treasury.addBeneficiary(addr1.address, beneficiaryAmount))
-    //     .to.be.revertedWithCustomError(treasury, "AlreadyAllocated");
-    // });
+    it("Should revert if adding same beneficiary twice", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
+      await expect(treasury.addBeneficiary(addr1.address, beneficiaryAmount))
+        .to.be.revertedWithCustomError(treasury, "AlreadyAllocated");
+    });
 
-    // it("Should revert if allocation exceeds total", async function () {
-    //   const hugeAmount = ethers.parseUnits("2000000000", TOKEN_DECIMALS); // 2B > 1B total
-    //   await expect(treasury.addBeneficiary(addr1.address, hugeAmount))
-    //     .to.be.revertedWithCustomError(treasury, "ExceedsTotalAllocation");
-    // });
+    it("Should revert if allocation exceeds total", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      const hugeAmount = ethers.parseUnits("2000000000", TOKEN_DECIMALS); // 2B > 1B total
+      await expect(treasury.addBeneficiary(addr1.address, hugeAmount))
+        .to.be.revertedWithCustomError(treasury, "ExceedsTotalAllocation");
+    });
 
-    // it("Should update beneficiary allocation before locking", async function () {
-    //   await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
-    //   const newAmount = ethers.parseUnits("200000", TOKEN_DECIMALS);
-    //   await expect(treasury.updateBeneficiary(addr1.address, newAmount))
-    //     .to.emit(treasury, "BeneficiaryUpdated")
-    //     .withArgs(addr1.address, newAmount);
-    // });
+    it("Should update beneficiary allocation before locking", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
+      const newAmount = ethers.parseUnits("200000", TOKEN_DECIMALS);
+      await expect(treasury.updateBeneficiary(addr1.address, newAmount))
+        .to.emit(treasury, "BeneficiaryUpdated")
+        .withArgs(addr1.address, newAmount);
+    });
 
-    // it("Should revert updating after locking", async function () {
-    //   await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
-    //   await treasury.lockAllocations();
-    //   const newAmount = ethers.parseUnits("200000", TOKEN_DECIMALS);
-    //   await expect(treasury.updateBeneficiary(addr1.address, newAmount))
-    //     .to.be.revertedWithCustomError(treasury, "AllocationsAlreadyLocked");
-    // });
+    it("Should revert updating after locking", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
+      await treasury.lockAllocations();
+      const newAmount = ethers.parseUnits("200000", TOKEN_DECIMALS);
+      await expect(treasury.updateBeneficiary(addr1.address, newAmount))
+        .to.be.revertedWithCustomError(treasury, "AllocationsAlreadyLocked");
+    });
 
-    // it("Should remove beneficiary before locking", async function () {
-    //   await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
-    //   await expect(treasury.removeBeneficiary(addr1.address))
-    //     .to.emit(treasury, "BeneficiaryRemoved")
-    //     .withArgs(addr1.address, beneficiaryAmount);
-    // });
+    it("Should remove beneficiary before locking", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      await treasury.addBeneficiary(addr1.address, beneficiaryAmount);
+      await expect(treasury.removeBeneficiary(addr1.address))
+        .to.emit(treasury, "BeneficiaryRemoved")
+        .withArgs(addr1.address, beneficiaryAmount);
+    });
   });
 
   // ---------------- LOCKING ---------------- //
@@ -1007,6 +1018,159 @@ describe("EscrowTeamTreasury", function () {
       // Should not change milestone
       const schedule = await treasury.getVestingSchedule();
       expect(schedule.currentMilestone).to.equal(0);
+    });
+  });
+
+  // ---------------- ADDITIONAL TESTS FOR 100% COVERAGE ---------------- //
+  describe("Additional Tests for 100% Coverage", function () {
+    const beneficiaryAmount = ethers.parseUnits("100000", TOKEN_DECIMALS);
+
+    beforeEach(async function () {
+      // Setup treasury (don't lock allocations for tests that need to modify beneficiaries)
+      const amount = await treasury.TOTAL_ALLOCATION();
+      await (await escrowToken.mint(owner.address, amount)).wait();
+      await (await escrowToken.approve(treasury.getAddress(), amount)).wait();
+      await (await treasury.fundTreasury()).wait();
+      // Note: Don't lock here, lock in tests that need it
+    });
+
+    it("Should handle claimTokens when paused", async function () {
+      await treasury.lockAllocations();
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      const firstBeneficiary = initialBeneficiaries[0];
+      await treasury.pause();
+      await time.increase(LOCK_DURATION);
+      await expect(treasury.connect(owner).claimFor(firstBeneficiary))
+        .to.be.revertedWithCustomError(treasury, "EnforcedPause");
+    });
+
+    it("Should handle claimFor when paused", async function () {
+      await treasury.lockAllocations();
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      const firstBeneficiary = initialBeneficiaries[0];
+      await treasury.pause();
+      await time.increase(LOCK_DURATION);
+      await expect(treasury.connect(owner).claimFor(firstBeneficiary))
+        .to.be.revertedWithCustomError(treasury, "EnforcedPause");
+    });
+
+  it("Should handle revokeAllocation with no claimable amount", async function () {
+    await treasury.lockAllocations();
+    const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+    const firstBeneficiary = initialBeneficiaries[0];
+    await expect(treasury.revokeAllocation(firstBeneficiary))
+      .to.emit(treasury, "AllocationRevoked");
+  });
+
+  it("Should handle _getCurrentMilestone at exact first unlock time", async function () {
+    await treasury.lockAllocations();
+    await time.increase(LOCK_DURATION);
+    const schedule = await treasury.getVestingSchedule();
+    expect(schedule.currentMilestone).to.equal(1);
+  });
+
+  it("Should handle _getCurrentMilestone at exact milestone boundaries", async function () {
+    await treasury.lockAllocations();
+    await time.increase(LOCK_DURATION + VESTING_INTERVAL);
+    const schedule = await treasury.getVestingSchedule();
+    expect(schedule.currentMilestone).to.equal(2);
+  });
+
+  it("Should handle getTimeUntilNextUnlock at exact unlock time", async function () {
+    await treasury.lockAllocations();
+    await time.increase(LOCK_DURATION);
+    const timeUntil = await treasury.getTimeUntilNextUnlock();
+    expect(timeUntil).to.be.closeTo(VESTING_INTERVAL, 10);
+  });
+
+    it("Should handle getClaimableAmount for inactive beneficiary", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      const claimable = await treasury.getClaimableAmount(initialBeneficiaries[0]);
+      expect(claimable).to.equal(0);
+    });
+
+    it("Should handle getBeneficiaryInfo for non-existent beneficiary", async function () {
+      const info = await treasury.getBeneficiaryInfo(addr2.address);
+      expect(info.totalAllocation).to.equal(0);
+      expect(info.isActive).to.be.false;
+    });
+
+    it("Should handle getTreasuryStats with zero balance", async function () {
+      // Mint extra tokens and withdraw them all
+      const extraTokens = ethers.parseUnits("1000", TOKEN_DECIMALS);
+      await escrowToken.mint(await treasury.getAddress(), extraTokens);
+      await treasury.emergencyWithdraw();
+      const stats = await treasury.getTreasuryStats();
+      expect(stats.unallocated).to.equal(0);
+    });
+
+    it("Should handle getVestingSchedule after all milestones", async function () {
+      await treasury.lockAllocations();
+      const totalTime = LOCK_DURATION + (VESTING_MILESTONES * VESTING_INTERVAL);
+      await time.increase(totalTime);
+      const schedule = await treasury.getVestingSchedule();
+      expect(schedule.currentMilestone).to.equal(VESTING_MILESTONES);
+    });
+
+    it("Should handle getNextUnlockTime after all milestones", async function () {
+      await treasury.lockAllocations();
+      const totalTime = LOCK_DURATION + (VESTING_MILESTONES * VESTING_INTERVAL);
+      await time.increase(totalTime);
+      const nextUnlock = await treasury.getNextUnlockTime();
+      expect(nextUnlock).to.equal(0);
+    });
+
+    it("Should handle emergencyWithdraw when balance exactly equals locked", async function () {
+      await expect(treasury.emergencyWithdraw())
+        .to.be.revertedWithCustomError(treasury, "InsufficientBalance");
+    });
+
+    it("Should handle revokeAllocation after partial claim", async function () {
+      await treasury.lockAllocations();
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      const firstBeneficiary = initialBeneficiaries[0];
+      await time.increase(LOCK_DURATION);
+      await treasury.connect(owner).claimFor(firstBeneficiary);
+      await expect(treasury.revokeAllocation(firstBeneficiary))
+        .to.emit(treasury, "AllocationRevoked");
+    });
+
+    it("Should handle getTimeUntilNextUnlock at exact unlock time", async function () {
+      await treasury.lockAllocations();
+      await time.increase(LOCK_DURATION);
+      const timeUntil = await treasury.getTimeUntilNextUnlock();
+      expect(timeUntil).to.be.closeTo(VESTING_INTERVAL, 10);
+    });
+
+    it("Should handle getAllBeneficiaries after removals", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      const beneficiaries = await treasury.getAllBeneficiaries();
+      expect(beneficiaries.addresses.length).to.equal(27);
+    });
+
+    it("Should handle isBeneficiary for removed beneficiary", async function () {
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      await treasury.removeBeneficiary(initialBeneficiaries[0]);
+      expect(await treasury.isBeneficiary(initialBeneficiaries[0])).to.be.false;
+    });
+
+    it("Should handle getContractInfo correctly", async function () {
+      const info = await treasury.getContractInfo();
+      expect(info.tokenAddress).to.equal(await escrowToken.getAddress());
+      expect(info.totalAllocation).to.equal(await treasury.TOTAL_ALLOCATION());
+    });
+
+    it("Should handle claiming after unpause", async function () {
+      await treasury.lockAllocations();
+      const initialBeneficiaries = await treasury.getInitialBeneficiaries();
+      const firstBeneficiary = initialBeneficiaries[0];
+      await treasury.pause();
+      await treasury.unpause();
+      await time.increase(LOCK_DURATION);
+      await expect(treasury.connect(owner).claimFor(firstBeneficiary))
+        .to.emit(treasury, "TokensClaimed");
     });
   });
 });
