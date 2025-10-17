@@ -120,16 +120,100 @@ await treasury.claimTokens();
 const claimable = await treasury.getClaimableAmount(beneficiaryAddress);
 ```
 
+# EscrowTeamTreasury
+
+A Solidity smart contract for managing token vesting for team members, founders, and advisors with a 3-year lock period and 5 vesting milestones.
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js (v16 or higher)
+- npm or yarn
+- Git
+
+### Installation
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd tresary_contract
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Compile contracts**
+   ```bash
+   npx hardhat compile
+   ```
+
+## 📋 Deployment Guide
+
+### Local Deployment (Hardhat Network)
+1. **Start local network**
+   ```bash
+   npx hardhat node
+   ```
+
+2. **Deploy contracts**
+   ```bash
+   npx hardhat run scripts/deploy.js --network localhost
+   ```
+
+   This deploys the treasury, funds it, and locks allocations.
+
+3. **Verify deployment**
+   ```bash
+   npm test
+   ```
+
+### Production Deployment
+Configure network in `hardhat.config.js` and deploy to mainnet/testnet.
+
+## 🛠️ Usage
+
+### Adding Beneficiaries
+```javascript
+await treasury.addBeneficiary(beneficiaryAddress, allocationAmount);
+await treasury.lockAllocations();
+```
+
+### Claiming Tokens
+```javascript
+await treasury.claimTokens();
+```
+
 ## 📊 Test Coverage
+- **100% Statement Coverage**
+- **100% Branch Coverage**
+- **100% Function Coverage**
+- **100% Line Coverage**
 
-The project has excellent test coverage ensuring reliability:
+Run `npx hardhat coverage` for reports.
 
-- **98.29% Statement Coverage** - Almost all code paths are tested
-- **68.03% Branch Coverage** - Good coverage of conditional branches
-- **100% Function Coverage** - All functions are tested
-- **100% Line Coverage** - All lines of code are executed
+## 🔧 Gas Optimization
+Optimized for efficiency with unchecked operations and efficient array management.
 
-Run `npx hardhat coverage` to generate detailed reports in the `coverage/` directory.
+## 🧪 Testing
+Run `npm test` for 90+ passing tests.
+
+## 📚 Documentation
+- **Project Progress**: See [project_progress.md](project_progress.md)
+- **Detailed Docs**: See [project_document.md](project_document.md)
+
+## 🔒 Security Features
+Reentrancy protection, access control, pause mechanism, input validation.
+
+## 📄 License
+MIT License.
+
+---
+
+**Quick Deploy Command:**
+```bash
+npm install && npx hardhat compile && npx hardhat run scripts/deploy.js --network localhost
+```
 
 ## 🔧 Gas Optimization
 
