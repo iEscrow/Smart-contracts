@@ -72,8 +72,58 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     /// @notice Whether allocations are locked (no more changes)
     bool public allocationsLocked;
     
+    /**
+     * @notice Get the list of initial beneficiary addresses
+     */
+    function getInitialBeneficiaries() external view returns (address[] memory) {
+        return initialBeneficiaries;
+    }
+    
     /// @notice Treasury funded status
     bool public treasuryFunded;
+    
+    /// @notice List of initial beneficiary addresses
+    address[] private initialBeneficiaries = [
+        0x04435410a78192baAfa00c72C659aD3187a2C2cF,
+        0x9005132849bC9585A948269D96F23f56e5981A61,
+        0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74,
+        0x03a54ADc7101393776C200529A454b4cDc3545C5,
+        0x04D83B2BdF89fe4C781Ec8aE3D672c610080B319,
+        0xA5F415dA5b5E63aFc8f0c378F047671592A842Fe,
+        0x77aB60050DFA1E2764366BC52A83EEab1E1a35ad,
+        0x543ed850e2df486e2B37A602926C12b97b910405,
+        0xC259811079610E1a60Bf5ebCb7d0F8Ac3857b1d6,
+        0x68f5d8e68abDf9c6C0233DE2bdAda5e18CC6634d,
+        0x30D3d7C9A4276a5A63EE9c36d6C69CEA3e6B08da,
+        0x69873ef24F48205036177b03628f8727b8445999,
+        0x790823b7bd58f1b84D99Cd7d474C24Af894deE2c,
+        0x9f1Ec9342a567E16703076385763f49aABFFA15e,
+        0x687B309a341B453084539f83081B292462a92c4D,
+        0x01553Bc974Ed86f892813E535B1Ed03a384212F5,
+        0xE0C7f8329F0d401bE419A2F15371aB2DAfe3f7c4,
+        0x6fBa9db2Ca25cC280ec559aD44540bD7B061a66B,
+        0xfa44D3E91aBf1327566a2c34E9f46C332B412634,
+        0x5d8d1EA81af164051F341fB6224F243775Dea07a,
+        0x37006C70d09fc59abF3EeE7a1B244d6c831cb281,
+        0xC6808526ed02162668Ec35D7C0b16f1C99802534,
+        0x91C665974574a51bd9Eb23aE79B26C58415eF6b2,
+        0x658ba47F95541d8919C46b3488dE12be7587167D,
+        0x54920dEb99489F36AB7204F727E20B72fB391e7b,
+        0x4C11b6D0d1aD06F95966372014097AE3411cE7b9,
+        0x277cAebe8E2d2284752d75853Fe70aF00dE893ac,
+        0x2C9760E45abB8879A6ac86d3CA19012Cf513738d
+    ];
+
+    /// @notice Corresponding allocations (10M or 50M tokens each)
+    uint256[] private initialAllocations = [
+        10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
+        10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
+        10_000_000 * 1e18, 10_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18
+    ];
     
     // ============ EVENTS ============
     
@@ -115,6 +165,19 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         escrowToken = IERC20(_escrowToken);
         treasuryStartTime = block.timestamp;
         firstUnlockTime = block.timestamp + LOCK_DURATION;
+        
+        // Initialize beneficiaries from hardcoded lists
+        for (uint256 i = 0; i < initialBeneficiaries.length; i++) {
+            beneficiaries[initialBeneficiaries[i]] = Beneficiary({
+                totalAllocation: initialAllocations[i],
+                claimedAmount: 0,
+                lastClaimMilestone: 0,
+                isActive: true,
+                revoked: false
+            });
+            beneficiaryList.push(initialBeneficiaries[i]);
+            totalAllocated += initialAllocations[i];
+        }
         
         emit TreasuryFunded(0, block.timestamp); // Deployment event
     }
