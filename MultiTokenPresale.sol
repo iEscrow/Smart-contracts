@@ -754,7 +754,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ KYC MANAGEMENT FUNCTIONS ============
     
-    ///  Update the KYC contract address
+    /// @notice Update the KYC contract address
+    /// @param _kycContract New KYC contract address
     function updateKYCContract(address _kycContract) external onlyOwner {
         require(_kycContract != address(0), "Invalid KYC contract");
         address oldContract = address(kycContract);
@@ -762,19 +763,24 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit KYCContractUpdated(oldContract, _kycContract);
     }
     
-    /// Toggle KYC requirement on/off
+    /// @notice Toggle KYC requirement on/off
+    /// @param _required Whether KYC verification is required
     function setKYCRequired(bool _required) external onlyOwner {
         kycRequired = _required;
         emit KYCRequirementUpdated(_required);
     }
     
-    ///  Get KYC contract address and requirement status
+    /// @notice Get KYC contract address and requirement status
+    /// @return kycAddress Address of the KYC contract
+    /// @return required Whether KYC is required
     function getKYCInfo() external view returns (address kycAddress, bool required) {
         kycAddress = address(kycContract);
         required = kycRequired;
     }
     
-    ///  Check if a user is KYC verified
+    /// @notice Check if a user is KYC verified
+    /// @param user Address to check KYC status for
+    /// @return verified Whether the user is KYC verified
     function isUserKYCVerified(address user) external view returns (bool verified) {
         return kycContract.isCurrentlyVerified(user);
     }
