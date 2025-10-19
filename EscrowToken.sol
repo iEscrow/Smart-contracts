@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -14,25 +15,46 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     // ============ CONSTANTS ============
     
+    /// @notice Maximum total supply of tokens
+    /// @dev 100 billion tokens
     uint256 public constant MAX_SUPPLY = 100_000_000_000 * 1e18; // 100 billion tokens
+    /// @notice Allocation for presale
+    /// @dev 5 billion tokens
     uint256 public constant PRESALE_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion for presale
     
     // ============ STATE VARIABLES ============
     
+    /// @notice Total amount of tokens minted so far
     uint256 public totalMinted;
+    /// @notice Whether minting has been permanently finalized
     bool public mintingFinalized;
+    /// @notice Mapping of addresses authorized to mint tokens
     mapping(address => bool) public isMinter;
+    /// @notice Whether the presale allocation has been minted
     bool public presaleAllocationMinted;
     
     // ============ EVENTS ============
     
+    /// @notice Emitted when a minter's status is updated
+    /// @param minter The address whose minter status was updated
+    /// @param status The new minter status
     event MinterUpdated(address indexed minter, bool status);
+    /// @notice Emitted when minting is finalized
     event MintingFinalized();
+    /// @notice Emitted when presale allocation is minted
+    /// @param presaleContract The address of the presale contract
+    /// @param amount The amount of tokens minted
     event PresaleAllocationMinted(address indexed presaleContract, uint256 amount);
+    /// @notice Emitted when emergency withdrawal occurs
+    /// @param token The address of the withdrawn token (0 for ETH)
+    /// @param to The address receiving the withdrawal
+    /// @param amount The amount withdrawn
     event EmergencyWithdrawal(address indexed token, address indexed to, uint256 amount);
     
     // ============ CONSTRUCTOR ============
     
+    /// @notice Contract constructor
+    /// @dev Initializes the ERC20 token with name and symbol, sets owner
     constructor() 
         ERC20("Escrow Token", "ESCROW") 
         ERC20Permit("Escrow Token")
