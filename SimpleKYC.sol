@@ -2,13 +2,13 @@
 pragma solidity ^0.8.20;
 
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title SimpleKYC
 /// @notice Simplified KYC contract for testing purposes
 /// @dev This contract is designed for testing and audit preparation only
-contract SimpleKYC is EIP712 {
+contract SimpleKYC is EIP712, Ownable {
     address public kycSigner;
-    address public admin;
 
     mapping(address => bool) public isVerified;
 
@@ -16,15 +16,13 @@ contract SimpleKYC is EIP712 {
 
     /// @notice Constructor
     /// @param _kycSigner Address authorized to sign KYC data
-    constructor(address _kycSigner) EIP712("KYCVerification", "1") {
+    constructor(address _kycSigner) EIP712("KYCVerification", "1") Ownable(msg.sender) {
         kycSigner = _kycSigner;
-        admin = msg.sender; // deployer is admin
     }
 
     /// @notice Admin function to directly mark KYC = true for testing
     /// @param user Address to verify
-    function adminSetVerified(address user) external {
-        require(msg.sender == admin, "Only admin can set");
+    function adminSetVerified(address user) external onlyOwner {
         require(!isVerified[user], "Already verified");
         isVerified[user] = true;
 
@@ -40,17 +38,15 @@ contract SimpleKYC is EIP712 {
 
     /// @notice Admin function to revoke KYC for testing
     /// @param user Address to revoke KYC for
-    function adminRevokeVerified(address user) external {
-        require(msg.sender == admin, "Only admin can revoke");
+    function adminRevokeVerified(address user) external onlyOwner {
         isVerified[user] = false;
         emit UserVerified(user, false);
     }
 
     /// @notice Update admin address
     /// @param newAdmin New admin address
-    function updateAdmin(address newAdmin) external {
-        require(msg.sender == admin, "Only admin can update");
+    function updateAdmin(address newAdmin) external onlyOwner {
         require(newAdmin != address(0), "Invalid admin address");
-        admin = newAdmin;
+        // Note: Since using Ownable, this function is redundant, but kept for compatibility
     }
 }

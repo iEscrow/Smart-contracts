@@ -187,7 +187,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Invalid amount");
         
-        IERC20(token).transfer(to, amount);
+        SafeERC20.safeTransfer(IERC20(token), to, amount);
         emit EmergencyWithdrawal(token, to, amount);
     }
     

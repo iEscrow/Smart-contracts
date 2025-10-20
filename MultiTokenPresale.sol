@@ -242,7 +242,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function endPresale() external onlyOwner {
         require(presaleStartTime > 0, "Presale not started");
         require(!presaleEnded, "Presale already ended");
-        if(block.timestamp < presaleEndTime) revert("Presale not ended yet");
+        if (block.timestamp < presaleEndTime) revert("Presale not ended yet");
         presaleEnded = true;
         presaleEndTime = block.timestamp;
         emit PresaleEnded(presaleEndTime);
@@ -369,7 +369,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         totalUsdPurchased[beneficiary] += usdValue * 1e8;
         
         // Calculate presale tokens (limit enforced at total token level in _processPurchase)
-        return (usdValue * presaleRate) ;
+        return (usdValue * presaleRate) / 1e18;
     }
     
     function _processPurchase(
@@ -382,9 +382,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
         // Update tracking
-        purchasedAmounts[beneficiary][paymentToken] += paymentAmount;
-        totalPurchased[beneficiary] += tokenAmount;
-        totalTokensMinted += tokenAmount;
+        unchecked {
+            purchasedAmounts[beneficiary][paymentToken] += paymentAmount;
+            totalPurchased[beneficiary] += tokenAmount;
+            totalTokensMinted += tokenAmount;
+        }
         
         // Track tokens sold per round
         if (currentRound == 1) {
@@ -491,7 +493,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // No per-user limit - only total token supply limit enforced
         // Calculate presale tokens
-        return (usdValue * presaleRate);
+        return (usdValue * presaleRate) / 1e18;
     }
     
     function getRemainingTokens() external view returns (uint256) {
