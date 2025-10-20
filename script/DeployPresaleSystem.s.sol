@@ -6,15 +6,38 @@ import "../EscrowToken.sol";
 import "../MultiTokenPresale.sol";
 import "../SimpleKYC.sol";
 
-// Deployment script for the complete presale system
-// Usage: forge script script/DeployPresaleSystem.s.sol --broadcast --rpc-url <your_rpc>
+/**
+ * @title DeployPresaleSystem
+ * @dev Foundry script for deploying the complete escrow presale system.
+ * 
+ * This script deploys and configures:
+ * - EscrowToken: The ERC-20 token for the presale.
+ * - SimpleKYC: Handles KYC verification using EIP-712 signatures.
+ * - MultiTokenPresale: Manages the presale logic with multiple payment tokens.
+ * 
+ * Prerequisites:
+ * - Set PRIVATE_KEY environment variable (e.g., via .env file).
+ * - Run with: forge script script/DeployPresaleSystem.s.sol --broadcast --rpc-url <RPC_URL>
+ * 
+ * Post-Deployment:
+ * - Verify contracts on block explorers.
+ * - Integrate with frontend and configure KYC.
+ * 
+ * Note: Presale launch date and parameters are based on whitepaper specs.
+ * Ensure RPC URL and network are correct to avoid deployment errors.
+ */
 contract DeployPresaleSystem is Script {
     
     // Constants matching whitepaper specifications
-    uint256 constant PRESALE_RATE = 666666666666666666; // 0.0015 USD per token
-    uint256 constant PRESALE_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion tokens
+    // These define the presale rate and total token allocation for the escrow system.
+    // - PRESALE_RATE: Number of tokens per unit of payment (wei equivalent for $0.0015 USD per token).
+    // - PRESALE_ALLOCATION: Total tokens allocated for presale (5 billion with 18 decimal places).
+    uint256 constant PRESALE_RATE = 666666666666666666; // 0.0015 USD per token (calculated for wei precision)
+    uint256 constant PRESALE_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion tokens (5e9 * 10^18 for ERC-20 decimals)
     
     function run() external {
+        // Retrieve deployer's private key from environment variables.
+        // Ensure PRIVATE_KEY is set (e.g., via .env) to avoid runtime errors.
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         
@@ -57,6 +80,8 @@ contract DeployPresaleSystem is Script {
         console.log("Presale contract balance:", escrowToken.balanceOf(address(presale)) / 1e18, "tokens");
         
         // 5. Verify setup
+        // Call validateIEscrowSetup to check if the presale contract is properly configured.
+        // This ensures tokens, dates, limits, and deposits are set correctly before proceeding.
         console.log("\n=== Step 5: Verifying Setup ===");
         (bool hasTokens, bool startDate, bool limits, bool deposited, string memory issues) = 
             presale.validateIEscrowSetup();
