@@ -7,6 +7,7 @@ pragma solidity 0.8.20;
  * @notice Treasury contract for Founders, Team & Advisors (1% allocation)
  * @dev Flexible vesting with 3-year lock + 2-year release (20% every 6 months)
  * @custom:security-contact security@iescrow.com
+ * @custom:whitepaper-ref Implements vesting schedule as specified in project tokenomics
  */
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -38,6 +39,13 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     
     // ============ STRUCTS ============
     
+    /// @notice Structure containing beneficiary information and vesting state
+    /// @dev Tracks allocation, claims, and status for each beneficiary
+    /// @param totalAllocation Total tokens allocated to this beneficiary
+    /// @param claimedAmount Amount of tokens already claimed
+    /// @param lastClaimMilestone Last milestone when tokens were claimed (0-4)
+    /// @param isActive Whether beneficiary is currently active
+    /// @param revoked Whether allocation has been revoked by admin
     struct Beneficiary {
         uint256 totalAllocation;      // Total tokens allocated
         uint256 claimedAmount;        // Amount already claimed
@@ -127,30 +135,88 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     
     // ============ EVENTS ============
     
+    /// @notice Emitted when treasury is funded with tokens
+    /// @param amount Amount of tokens funded
+    /// @param timestamp Time when funding occurred
     event TreasuryFunded(uint256 amount, uint256 timestamp);
+    
+    /// @notice Emitted when a new beneficiary is added
+    /// @param beneficiary Address of the new beneficiary
+    /// @param allocation Token allocation for the beneficiary
     event BeneficiaryAdded(address indexed beneficiary, uint256 allocation);
+    
+    /// @notice Emitted when beneficiary allocation is updated
+    /// @param beneficiary Address of the beneficiary
+    /// @param newAllocation New token allocation amount
     event BeneficiaryUpdated(address indexed beneficiary, uint256 newAllocation);
+    
+    /// @notice Emitted when beneficiary is removed
+    /// @param beneficiary Address of the removed beneficiary
+    /// @param allocation Allocation that was removed
     event BeneficiaryRemoved(address indexed beneficiary, uint256 allocation);
+    
+    /// @notice Emitted when tokens are claimed by a beneficiary
+    /// @param beneficiary Address that claimed tokens
+    /// @param amount Amount of tokens claimed
+    /// @param milestone Vesting milestone when claimed
     event TokensClaimed(address indexed beneficiary, uint256 amount, uint256 milestone);
+    
+    /// @notice Emitted when beneficiary allocation is revoked
+    /// @param beneficiary Address whose allocation was revoked
+    /// @param unvestedAmount Amount of unvested tokens recovered
     event AllocationRevoked(address indexed beneficiary, uint256 unvestedAmount);
+    
+    /// @notice Emitted when allocations are locked (no more changes allowed)
+    /// @param timestamp Time when allocations were locked
     event AllocationsLocked(uint256 timestamp);
+    
+    /// @notice Emitted when emergency withdrawal occurs
+    /// @param token Address of token withdrawn
+    /// @param amount Amount withdrawn
     event EmergencyWithdraw(address indexed token, uint256 amount);
     
     // ============ ERRORS ============
     
+    /// @notice Error thrown when address is invalid (zero address)
     error InvalidAddress();
+    
+    /// @notice Error thrown when amount is invalid (zero amount)
     error InvalidAmount();
+    
+    /// @notice Error thrown when allocation would exceed total allocation limit
     error ExceedsTotalAllocation();
+    
+    /// @notice Error thrown when beneficiary is already allocated
     error AlreadyAllocated();
+    
+    /// @notice Error thrown when address is not a beneficiary
     error NotBeneficiary();
+    
+    /// @notice Error thrown when trying to modify allocations after they are locked
     error AllocationsAlreadyLocked();
+    
+    /// @notice Error thrown when allocations are not locked but should be
     error AllocationsNotLocked();
+    
+    /// @notice Error thrown when treasury is not funded but operation requires it
     error TreasuryNotFunded();
+    
+    /// @notice Error thrown when treasury is already funded
     error TreasuryAlreadyFunded();
+    
+    /// @notice Error thrown when lock period has not ended
     error LockPeriodNotEnded();
+    
+    /// @notice Error thrown when no tokens are available to claim
     error NoTokensAvailable();
+    
+    /// @notice Error thrown when allocation has already been revoked
     error AllocationAlreadyRevoked();
+    
+    /// @notice Error thrown when milestone value is invalid
     error InvalidMilestone();
+    
+    /// @notice Error thrown when balance is insufficient for operation
     error InsufficientBalance();
     
     // ============ CONSTRUCTOR ============
