@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./SimpleKYC.sol";
+import "./Authorizer.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -30,6 +31,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // KYC integration
     SimpleKYC public kycContract;
     bool public kycRequired = true; // KYC is required by default
+    
+    // Authorizer integration for voucher-based purchases
+    Authorizer public authorizer;
+    bool public voucherSystemEnabled = false; // Disabled by default for compatibility
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -92,6 +97,16 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event KYCRequirementUpdated(bool required);
     event GasBufferUpdated(uint256 oldBuffer, uint256 newBuffer);
     event MaxPurchasePerUserUpdated(uint256 oldMax, uint256 newMax);
+    event AuthorizerUpdated(address indexed oldAuthorizer, address indexed newAuthorizer);
+    event VoucherSystemToggled(bool enabled);
+    event VoucherPurchase(
+        address indexed purchaser,
+        address indexed beneficiary,
+        address indexed paymentToken,
+        uint256 paymentAmount,
+        uint256 tokenAmount,
+        bytes32 voucherHash
+    );
     
     constructor(
         address _presaleToken,
@@ -356,6 +371,92 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         buyWithToken(USDT_ADDRESS, amount, beneficiary);
     }
     
+    // ============ VOUCHER-BASED PURCHASE FUNCTIONS ============
+    
+    /// @notice Purchase with native currency using voucher authorization
+    /// @param beneficiary Address that will receive the tokens
+    /// @param voucher Purchase voucher containing authorization details
+    /// @param signature EIP-712 signature of the voucher
+    function buyWithNativeVoucher(
+        address beneficiary,
+        Authorizer.Voucher calldata voucher,
+        bytes calldata signature
+    ) external payable nonReentrant whenNotPaused {
+        require(voucherSystemEnabled, "Voucher system not enabled");
+        require(address(authorizer) != address(0), "Authorizer not set");
+        require(beneficiary != address(0), "Invalid beneficiary");
+        require(msg.value > 0, "No native currency sent");
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+        require(voucher.buyer == msg.sender, "Only buyer can use voucher");
+        require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
+        require(voucher.paymentToken == NATIVE_ADDRESS, "Invalid payment token");
+        
+        TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
+        require(nativePrice.isActive, "Native currency not accepted");
+        
+        // Estimate gas cost and deduct from payment
+        uint256 gasCost = _estimateGasCost();
+        require(msg.value > gasCost, "Insufficient payment after gas");
+        
+        uint256 paymentAmount = msg.value - gasCost;
+        
+        // Calculate USD amount for authorization
+        uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
+        
+        // Authorize purchase with voucher
+        bool authorized = authorizer.authorize(voucher, signature, NATIVE_ADDRESS, usdAmount);
+        require(authorized, "Voucher authorization failed");
+        
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, paymentAmount, beneficiary, usdAmount);
+        _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
+    }
+    
+    /// @notice Purchase with ERC20 tokens using voucher authorization
+    /// @param token Payment token address
+    /// @param amount Payment token amount
+    /// @param beneficiary Address that will receive the tokens
+    /// @param voucher Purchase voucher containing authorization details
+    /// @param signature EIP-712 signature of the voucher
+    function buyWithTokenVoucher(
+        address token,
+        uint256 amount,
+        address beneficiary,
+        Authorizer.Voucher calldata voucher,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused {
+        require(voucherSystemEnabled, "Voucher system not enabled");
+        require(address(authorizer) != address(0), "Authorizer not set");
+        require(beneficiary != address(0), "Invalid beneficiary");
+        require(amount > 0, "Invalid amount");
+        require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+        require(voucher.buyer == msg.sender, "Only buyer can use voucher");
+        require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
+        require(voucher.paymentToken == token, "Invalid payment token");
+        
+        TokenPrice memory tokenPrice = tokenPrices[token];
+        require(tokenPrice.isActive, "Token not accepted");
+        
+        // Calculate USD amount for authorization
+        uint256 usdAmount = (amount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
+        
+        // Authorize purchase with voucher
+        bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
+        require(authorized, "Voucher authorization failed");
+        
+        // Transfer tokens (SafeERC20 handles USDT compatibility)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
+        _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
+    }
+    
     // ============ INTERNAL FUNCTIONS ============
     
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
@@ -370,6 +471,18 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // Calculate presale tokens (limit enforced at total token level in _processPurchase)
         return (usdValue * presaleRate) ;
+    }
+    
+    /// @notice Calculate token amount for voucher purchases (USD amount already calculated)
+    function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
+        TokenPrice memory price = tokenPrices[paymentToken];
+        require(price.isActive, "Token not accepted");
+        
+        // Track USD spent for analytics (convert to 8 decimals)
+        totalUsdPurchased[beneficiary] += usdAmount * 1e8;
+        
+        // Calculate presale tokens using provided USD amount
+        return (usdAmount * presaleRate);
     }
     
     function _processPurchase(
@@ -393,6 +506,47 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             round2TokensSold += tokenAmount;
         }
         
+        emit TokenPurchase(msg.sender, beneficiary, paymentToken, paymentAmount, tokenAmount);
+        
+        // Check auto-end conditions
+        _checkAutoEndConditions();
+    }
+    
+    /// @notice Process voucher-based purchase
+    function _processVoucherPurchase(
+        address beneficiary,
+        address paymentToken,
+        uint256 paymentAmount,
+        uint256 tokenAmount,
+        Authorizer.Voucher calldata voucher
+    ) internal {     
+        // Check if we can mint enough tokens
+        require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
+        
+        // Update tracking
+        purchasedAmounts[beneficiary][paymentToken] += paymentAmount;
+        totalPurchased[beneficiary] += tokenAmount;
+        totalTokensMinted += tokenAmount;
+        
+        // Track tokens sold per round
+        if (currentRound == 1) {
+            round1TokensSold += tokenAmount;
+        } else if (currentRound == 2) {
+            round2TokensSold += tokenAmount;
+        }
+        
+        // Generate voucher hash for event
+        bytes32 voucherHash = keccak256(abi.encode(
+            voucher.buyer,
+            voucher.beneficiary,
+            voucher.paymentToken,
+            voucher.usdLimit,
+            voucher.nonce,
+            voucher.deadline,
+            voucher.presale
+        ));
+        
+        emit VoucherPurchase(msg.sender, beneficiary, paymentToken, paymentAmount, tokenAmount, voucherHash);
         emit TokenPurchase(msg.sender, beneficiary, paymentToken, paymentAmount, tokenAmount);
         
         // Check auto-end conditions
@@ -783,6 +937,53 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     /// @return verified Whether the user is KYC verified
     function isUserKYCVerified(address user) external view returns (bool verified) {
         return kycContract.isCurrentlyVerified(user);
+    }
+    
+    // ============ AUTHORIZER MANAGEMENT FUNCTIONS ============
+    
+    /// @notice Update the Authorizer contract address
+    /// @param _authorizer New Authorizer contract address
+    function updateAuthorizer(address _authorizer) external onlyOwner {
+        address oldAuthorizer = address(authorizer);
+        authorizer = Authorizer(_authorizer);
+        emit AuthorizerUpdated(oldAuthorizer, _authorizer);
+    }
+    
+    /// @notice Toggle voucher system on/off
+    /// @param _enabled Whether voucher system is enabled
+    function setVoucherSystemEnabled(bool _enabled) external onlyOwner {
+        voucherSystemEnabled = _enabled;
+        emit VoucherSystemToggled(_enabled);
+    }
+    
+    /// @notice Get Authorizer contract address and system status
+    /// @return authorizerAddress Address of the Authorizer contract
+    /// @return enabled Whether voucher system is enabled
+    function getAuthorizerInfo() external view returns (address authorizerAddress, bool enabled) {
+        authorizerAddress = address(authorizer);
+        enabled = voucherSystemEnabled;
+    }
+    
+    /// @notice Validate a voucher without consuming it (view function)
+    /// @param voucher The purchase voucher to validate
+    /// @param signature EIP-712 signature of the voucher
+    /// @param paymentToken Token being used for payment
+    /// @param usdAmount USD amount being purchased (8 decimals)
+    /// @return valid True if voucher is valid
+    /// @return reason Reason for invalidity (empty if valid)
+    function validateVoucher(
+        Authorizer.Voucher calldata voucher,
+        bytes calldata signature,
+        address paymentToken,
+        uint256 usdAmount
+    ) external view returns (bool valid, string memory reason) {
+        if (!voucherSystemEnabled) {
+            return (false, "Voucher system not enabled");
+        }
+        if (address(authorizer) == address(0)) {
+            return (false, "Authorizer not set");
+        }
+        return authorizer.validateVoucher(voucher, signature, paymentToken, usdAmount);
     }
     
     // Alternative implementation with fixed gas buffer
