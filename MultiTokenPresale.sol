@@ -385,16 +385,16 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         return (usdValue * presaleRate) ;
     }
     
-    /// @notice Calculate token amount for voucher purchases (USD amount already calculated)
+    /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
     function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
         
-        // Track USD spent for analytics (convert to 8 decimals)
-        totalUsdPurchased[beneficiary] += usdAmount * 1e8;
+        // Track USD spent for analytics (usdAmount already has 8 decimals)
+        totalUsdPurchased[beneficiary] += usdAmount;
         
-        // Calculate presale tokens using provided USD amount
-        return (usdAmount * presaleRate);
+        // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
+        return (usdAmount * presaleRate) / 1e8;
     }
     
     function _processPurchase(

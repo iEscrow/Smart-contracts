@@ -5,6 +5,57 @@ import "forge-std/Test.sol";
 import "../Authorizer.sol";
 import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+/// @notice Mock ERC20 token for testing
+contract MockERC20 is ERC20 {
+    uint8 private _decimals;
+    
+    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
+        _decimals = decimals_;
+    }
+    
+    function decimals() public view virtual override returns (uint8) {
+        return _decimals;
+    }
+    
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+/// @notice Mock USDT that doesn't return bool on transfer (for testing SafeERC20)
+contract MockUSDT {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    
+    uint8 public constant decimals = 6;
+    string public constant name = "Tether USD";
+    string public constant symbol = "USDT";
+    
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+    
+    function approve(address spender, uint256 amount) external {
+        allowance[msg.sender][spender] = amount;
+    }
+    
+    // USDT doesn't return bool on transfer
+    function transfer(address to, uint256 amount) external {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+    
+    function transferFrom(address from, address to, uint256 amount) external {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        allowance[from][msg.sender] -= amount;
+    }
+}
 
 /// @title MultiTokenPresale Test Suite
 /// @notice Tests core presale functionality (rounds, timing, purchases) using voucher system
@@ -17,11 +68,17 @@ contract MultiTokenPresaleTest is Test {
     address public buyer1 = address(0x3);
     address public buyer2 = address(0x4);
     
+    // Mock tokens for testing
+    MockERC20 public mockUSDC;  // 6 decimals
+    MockERC20 public mockWBTC;  // 8 decimals
+    MockERC20 public mockWETH;  // 18 decimals
+    MockUSDT public mockUSDT;   // 6 decimals, no return value
+    
     uint256 public signerPrivateKey = 0xB0B;
     address public signer = vm.addr(signerPrivateKey);
     
     // Test constants
-    uint256 constant PRESALE_RATE = 666666666666666666; // 666.666... tokens per USD
+    uint256 constant PRESALE_RATE = 666666666666666666; // Matches contract: represents 666.666 tokens/$1 when used with formula
     uint256 constant MAX_TOKENS = 5000000000 * 1e18; // 5B tokens
     uint256 constant PRESALE_LAUNCH_DATE = 1762819200; // Nov 11, 2025
     uint256 constant VOUCHER_LIMIT = 10000 * 1e8; // $10000 limit
@@ -44,11 +101,33 @@ contract MultiTokenPresaleTest is Test {
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         
+        // Deploy mock tokens
+        mockUSDC = new MockERC20("USD Coin", "USDC", 6);
+        mockWBTC = new MockERC20("Wrapped Bitcoin", "WBTC", 8);
+        mockWETH = new MockERC20("Wrapped Ether", "WETH", 18);
+        mockUSDT = new MockUSDT();
+        
+        // Set token prices in presale
+        presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, true);      // $1
+        presale.setTokenPrice(address(mockWBTC), 45000 * 1e8, 8, true);  // $45,000
+        presale.setTokenPrice(address(mockWETH), 4200 * 1e8, 18, true);  // $4,200
+        presale.setTokenPrice(address(mockUSDT), 1 * 1e8, 6, true);      // $1
+        
         vm.stopPrank();
         
         // Give buyers ETH
         vm.deal(buyer1, 100 ether);
         vm.deal(buyer2, 100 ether);
+        
+        // Mint tokens to buyers
+        mockUSDC.mint(buyer1, 100000 * 1e6);  // 100k USDC
+        mockUSDC.mint(buyer2, 100000 * 1e6);
+        mockWBTC.mint(buyer1, 10 * 1e8);      // 10 WBTC
+        mockWBTC.mint(buyer2, 10 * 1e8);
+        mockWETH.mint(buyer1, 100 * 1e18);    // 100 WETH
+        mockWETH.mint(buyer2, 100 * 1e18);
+        mockUSDT.mint(buyer1, 100000 * 1e6);  // 100k USDT
+        mockUSDT.mint(buyer2, 100000 * 1e6);
     }
     
     // ========== PRESALE LIFECYCLE TESTS ==========
@@ -305,6 +384,182 @@ contract MultiTokenPresaleTest is Test {
         assertTrue(presale.totalPurchased(buyer1) > 0);
     }
     
+    // ========== ERC20 TOKEN PURCHASE TESTS ==========
+    
+    function testPurchaseWithUSDC() public {
+        _startPresale();
+        
+        uint256 usdcAmount = 1000 * 1e6; // $1000 USDC
+        _makeTokenPurchase(buyer1, address(mockUSDC), usdcAmount, 0);
+        
+        // Verify tokens allocated
+        assertTrue(presale.totalPurchased(buyer1) > 0);
+        
+        // Verify USDC transferred to presale
+        assertEq(mockUSDC.balanceOf(address(presale)), usdcAmount);
+    }
+    
+    function testPurchaseWithWBTC() public {
+        _startPresale();
+        
+        uint256 wbtcAmount = 0.1 * 1e8; // 0.1 WBTC (~$4500)
+        _makeTokenPurchase(buyer1, address(mockWBTC), wbtcAmount, 0);
+        
+        // Verify tokens allocated
+        assertTrue(presale.totalPurchased(buyer1) > 0);
+        
+        // Verify WBTC transferred
+        assertEq(mockWBTC.balanceOf(address(presale)), wbtcAmount);
+    }
+    
+    function testPurchaseWithWETH() public {
+        _startPresale();
+        
+        uint256 wethAmount = 1 * 1e18; // 1 WETH (~$4200)
+        _makeTokenPurchase(buyer1, address(mockWETH), wethAmount, 0);
+        
+        // Verify tokens allocated
+        assertTrue(presale.totalPurchased(buyer1) > 0);
+        
+        // Verify WETH transferred
+        assertEq(mockWETH.balanceOf(address(presale)), wethAmount);
+    }
+    
+    // ========== USDT COMPATIBILITY TESTS ==========
+    
+    function testPurchaseWithUSDT() public {
+        _startPresale();
+        
+        uint256 usdtAmount = 5000 * 1e6; // $5000 USDT
+        
+        // Approve and purchase
+        vm.startPrank(buyer1);
+        mockUSDT.approve(address(presale), usdtAmount);
+        
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(mockUSDT), 0);
+        bytes memory signature = _signVoucher(voucher);
+        
+        presale.buyWithTokenVoucher(address(mockUSDT), usdtAmount, buyer1, voucher, signature);
+        vm.stopPrank();
+        
+        // Verify purchase successful (SafeERC20 handles non-standard USDT)
+        assertTrue(presale.totalPurchased(buyer1) > 0);
+        assertEq(mockUSDT.balanceOf(address(presale)), usdtAmount);
+    }
+    
+    function testMultipleUSDTPurchases() public {
+        _startPresale();
+        
+        // First purchase
+        uint256 firstAmount = 1000 * 1e6;
+        vm.startPrank(buyer1);
+        mockUSDT.approve(address(presale), firstAmount);
+        Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(mockUSDT), 0);
+        presale.buyWithTokenVoucher(address(mockUSDT), firstAmount, buyer1, voucher1, _signVoucher(voucher1));
+        uint256 tokensAfterFirst = presale.totalPurchased(buyer1);
+        vm.stopPrank();
+        
+        // Second purchase
+        uint256 secondAmount = 2000 * 1e6;
+        vm.startPrank(buyer1);
+        mockUSDT.approve(address(presale), secondAmount);
+        Authorizer.Voucher memory voucher2 = _createVoucher(buyer1, buyer1, address(mockUSDT), 1);
+        presale.buyWithTokenVoucher(address(mockUSDT), secondAmount, buyer1, voucher2, _signVoucher(voucher2));
+        vm.stopPrank();
+        
+        // Verify accumulation
+        assertTrue(presale.totalPurchased(buyer1) > tokensAfterFirst);
+        assertEq(mockUSDT.balanceOf(address(presale)), firstAmount + secondAmount);
+    }
+    
+    // ========== DECIMAL HANDLING TESTS ==========
+    
+    function testDecimalHandling6Decimals() public {
+        _startPresale();
+        
+        // USDC: 6 decimals, $1 per token
+        uint256 usdcAmount = 100 * 1e6; // $100
+        _makeTokenPurchase(buyer1, address(mockUSDC), usdcAmount, 0);
+        
+        uint256 expectedTokens = 100 * presale.presaleRate(); // $100 worth of tokens
+        uint256 actualTokens = presale.totalPurchased(buyer1);
+        
+        // Allow small rounding difference
+        assertApproxEqRel(actualTokens, expectedTokens, 0.01e18); // 1% tolerance
+    }
+    
+    function testDecimalHandling8Decimals() public {
+        _startPresale();
+        
+        // WBTC: 8 decimals, $45,000 per token
+        uint256 wbtcAmount = 0.01 * 1e8; // 0.01 WBTC = $450
+        _makeTokenPurchase(buyer1, address(mockWBTC), wbtcAmount, 0);
+        
+        uint256 expectedTokens = 450 * presale.presaleRate(); // $450 worth
+        uint256 actualTokens = presale.totalPurchased(buyer1);
+        
+        assertApproxEqRel(actualTokens, expectedTokens, 0.01e18);
+    }
+    
+    function testDecimalHandling18Decimals() public {
+        _startPresale();
+        
+        // WETH: 18 decimals, $4200 per token
+        uint256 wethAmount = 0.5 * 1e18; // 0.5 WETH = $2100
+        _makeTokenPurchase(buyer1, address(mockWETH), wethAmount, 0);
+        
+        uint256 expectedTokens = 2100 * presale.presaleRate(); // $2100 worth
+        uint256 actualTokens = presale.totalPurchased(buyer1);
+        
+        assertApproxEqRel(actualTokens, expectedTokens, 0.01e18);
+    }
+    
+    function testMixedDecimalPurchases() public {
+        _startPresale();
+        
+        // Purchase with all three decimal types
+        _makeTokenPurchase(buyer1, address(mockUSDC), 100 * 1e6, 0);   // $100
+        _makeTokenPurchase(buyer1, address(mockWBTC), 0.01 * 1e8, 1);  // $450
+        _makeTokenPurchase(buyer1, address(mockWETH), 0.5 * 1e18, 2);  // $2100
+        
+        // Total should be $2650 worth of tokens
+        uint256 expectedTokens = 2650 * presale.presaleRate();
+        uint256 actualTokens = presale.totalPurchased(buyer1);
+        
+        assertApproxEqRel(actualTokens, expectedTokens, 0.02e18); // 2% tolerance for rounding
+    }
+    
+    // ========== EDGE CASES ==========
+    
+    function testCannotPurchaseWithInactiveToken() public {
+        _startPresale();
+        
+        // Disable USDC
+        vm.prank(owner);
+        presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, false);
+        
+        vm.startPrank(buyer1);
+        mockUSDC.approve(address(presale), 1000 * 1e6);
+        
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(mockUSDC), 0);
+        bytes memory signature = _signVoucher(voucher);
+        
+        vm.expectRevert("Token not accepted");
+        presale.buyWithTokenVoucher(address(mockUSDC), 1000 * 1e6, buyer1, voucher, signature);
+        vm.stopPrank();
+    }
+    
+    function testCannotPurchaseWithNativeUsingTokenFunction() public {
+        _startPresale();
+        
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
+        bytes memory signature = _signVoucher(voucher);
+        
+        vm.expectRevert("Use buyWithNativeVoucher for native currency");
+        vm.prank(buyer1);
+        presale.buyWithTokenVoucher(address(0), 0.01 ether, buyer1, voucher, signature);
+    }
+    
     // ========== HELPER FUNCTIONS ==========
     
     function _startPresale() internal {
@@ -354,5 +609,15 @@ contract MultiTokenPresaleTest is Test {
         
         vm.prank(buyer);
         presale.buyWithNativeVoucher{value: amount}(buyer, voucher, signature);
+    }
+    
+    function _makeTokenPurchase(address buyer, address token, uint256 amount, uint256 nonce) internal {
+        Authorizer.Voucher memory voucher = _createVoucher(buyer, buyer, token, nonce);
+        bytes memory signature = _signVoucher(voucher);
+        
+        vm.startPrank(buyer);
+        MockERC20(token).approve(address(presale), amount);
+        presale.buyWithTokenVoucher(token, amount, buyer, voucher, signature);
+        vm.stopPrank();
     }
 }
