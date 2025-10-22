@@ -424,9 +424,9 @@ contract AuthorizerIntegrationTest is Test {
         uint256 paymentAmount = ethAmount - gasCost;
         
         // Convert to USD (ETH price is $4200 with 8 decimals, ETH has 18 decimals)
-        uint256 usdValue = (paymentAmount * ETH_PRICE) / 1e18;
+        uint256 usdAmount = (paymentAmount * ETH_PRICE) / 1e18; // USD with 8 decimals
         
-        // Calculate tokens (presale rate has 18 decimals for tokens per USD)
-        return usdValue * PRESALE_RATE;
+        // Calculate tokens using voucher formula: (usdAmount * presaleRate) / 1e8
+        return (usdAmount * PRESALE_RATE) / 1e8;
     }
 }
