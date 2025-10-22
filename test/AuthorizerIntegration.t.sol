@@ -5,13 +5,11 @@ import "forge-std/Test.sol";
 import "../Authorizer.sol";
 import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
-import "../SimpleKYC.sol";
 
 contract AuthorizerIntegrationTest is Test {
     Authorizer public authorizer;
     MultiTokenPresale public presale;
     EscrowToken public escrowToken;
-    SimpleKYC public kyc;
     
     address public owner = address(0x1);
     address public buyer = address(0x3);
@@ -43,21 +41,18 @@ contract AuthorizerIntegrationTest is Test {
         
         // Deploy contracts
         escrowToken = new EscrowToken();
-        kyc = new SimpleKYC(owner);
         authorizer = new Authorizer(signer, owner);
         
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_TOKENS,
-            address(kyc)
+            MAX_TOKENS
         );
         
         // Set up presale
         escrowToken.mint(address(presale), MAX_TOKENS);
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
-        presale.setKYCRequired(false); // Disable old KYC for voucher tests
         
         // Start presale
         vm.warp(1762819200 + 1); // After launch date
