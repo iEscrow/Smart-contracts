@@ -20,7 +20,7 @@ contract AuthorizerIntegrationTest is Test {
     address public signer = vm.addr(signerPrivateKey); // Derive address from private key
     
     // Test constants
-    uint256 constant PRESALE_RATE = 666666666666666666; // 666.666... tokens per USD
+    uint256 constant PRESALE_RATE = 666666666666666667000; // 666.666... tokens per USD at $0.0015/token (18 decimals)
     uint256 constant MAX_TOKENS = 5000000000 * 1e18; // 5B tokens
     uint256 constant ETH_PRICE = 4200 * 1e8; // $4200
     uint256 constant VOUCHER_LIMIT = 10000 * 1e8; // $10000 limit

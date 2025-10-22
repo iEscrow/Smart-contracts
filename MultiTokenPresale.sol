@@ -103,7 +103,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     constructor(
         address _presaleToken,
-        uint256 _presaleRate, // 0.0015 dollar per token && presaleRate = 666666666666666666; // 666.666... with 18 decimals
+        uint256 _presaleRate, // 0.0015 dollar per token => 666.666... tokens per USD with 18 decimals: ~666666666666666667000
         uint256 _maxTokensToMint // 5 billion tokens to presale
     ) Ownable(msg.sender) {
         require(_presaleToken != address(0), "Invalid presale token");

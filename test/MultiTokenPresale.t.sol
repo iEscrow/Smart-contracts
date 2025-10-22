@@ -78,7 +78,7 @@ contract MultiTokenPresaleTest is Test {
     address public signer = vm.addr(signerPrivateKey);
     
     // Test constants
-    uint256 constant PRESALE_RATE = 666666666666666666; // Matches contract: represents 666.666 tokens/$1 when used with formula
+    uint256 constant PRESALE_RATE = 666666666666666667000; // 666.666... tokens per USD at $0.0015/token (18 decimals)
     uint256 constant MAX_TOKENS = 5000000000 * 1e18; // 5B tokens
     uint256 constant PRESALE_LAUNCH_DATE = 1762819200; // Nov 11, 2025
     uint256 constant VOUCHER_LIMIT = 10000 * 1e8; // $10000 limit
