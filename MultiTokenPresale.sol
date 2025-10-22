@@ -279,80 +279,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit RoundAdvanced(1, 2, block.timestamp);
     }
     
-    // ============ PURCHASE FUNCTIONS ============
-    
-    // Purchase with native currency (ETH on Ethereum, BNB on BSC)
-    // NOTE: This function is kept for backward compatibility but voucher system is recommended
-    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(msg.value > 0, "No native currency sent");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        
-        TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
-        require(nativePrice.isActive, "Native currency not accepted");
-        
-        // Estimate gas cost and deduct from payment
-        uint256 gasCost = _estimateGasCost();
-        require(msg.value > gasCost, "Insufficient payment after gas");
-        
-        uint256 paymentAmount = msg.value - gasCost;
-        uint256 tokenAmount = _calculateTokenAmount(NATIVE_ADDRESS, paymentAmount, beneficiary);
-        _processPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount);
-    }
-    
-    // Purchase with ERC20 tokens
-    // NOTE: This function is kept for backward compatibility but voucher system is recommended
-    function buyWithToken(
-        address token,
-        uint256 amount,
-        address beneficiary
-    ) public nonReentrant whenNotPaused {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(amount > 0, "Invalid amount");
-        require(token != NATIVE_ADDRESS, "Use buyWithNative for native currency");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        require(beneficiary == msg.sender, "Beneficiary must be the same as the sender");
-        
-        TokenPrice memory tokenPrice = tokenPrices[token];
-        require(tokenPrice.isActive, "Token not accepted");
-        
-        // Check allowance and transfer tokens (SafeERC20 handles USDT compatibility)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        
-        uint256 tokenAmount = _calculateTokenAmount(token, amount, beneficiary);
-        _processPurchase(beneficiary, token, amount, tokenAmount);
-    }
-    
-    // Convenience functions for specific tokens
-    function buyWithWETH(uint256 amount, address beneficiary) external {
-        buyWithToken(WETH_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithWBNB(uint256 amount, address beneficiary) external {
-        buyWithToken(WBNB_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithLINK(uint256 amount, address beneficiary) external {
-        buyWithToken(LINK_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithWBTC(uint256 amount, address beneficiary) external {
-        buyWithToken(WBTC_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithUSDC(uint256 amount, address beneficiary) external {
-        buyWithToken(USDC_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithUSDT(uint256 amount, address beneficiary) external {
-        buyWithToken(USDT_ADDRESS, amount, beneficiary);
-    }
+    // ============ VOUCHER-ONLY PURCHASE FUNCTIONS ============
+    // NOTE: All purchases MUST use vouchers (KYC verified off-chain)
+    // No direct purchase functions to prevent non-KYC purchases
     
     // ============ VOUCHER-BASED PURCHASE FUNCTIONS ============
     
@@ -937,17 +866,4 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         return authorizer.validateVoucher(voucher, signature, paymentToken, usdAmount);
     }
     
-    // Alternative implementation with fixed gas buffer
-    // NOTE: This function is kept for backward compatibility but voucher system is recommended
-    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(msg.value > gasBuffer, "Insufficient payment after gas buffer");
-        
-        TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
-        require(nativePrice.isActive, "Native currency not accepted");
-        
-        uint256 paymentAmount = msg.value - gasBuffer;
-        uint256 tokenAmount = _calculateTokenAmount(NATIVE_ADDRESS, paymentAmount, beneficiary);
-        _processPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount);
-    }
 }
