@@ -5,13 +5,11 @@ import "forge-std/Test.sol";
 import "../Authorizer.sol";
 import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
-import "../SimpleKYC.sol";
 
 contract AuthorizerIntegrationTest is Test {
     Authorizer public authorizer;
     MultiTokenPresale public presale;
     EscrowToken public escrowToken;
-    SimpleKYC public kyc;
     
     address public owner = address(0x1);
     address public buyer = address(0x3);
@@ -22,7 +20,7 @@ contract AuthorizerIntegrationTest is Test {
     address public signer = vm.addr(signerPrivateKey); // Derive address from private key
     
     // Test constants
-    uint256 constant PRESALE_RATE = 666666666666666666; // 666.666... tokens per USD
+    uint256 constant PRESALE_RATE = 666666666666666667000; // 666.666... tokens per USD at $0.0015/token (18 decimals)
     uint256 constant MAX_TOKENS = 5000000000 * 1e18; // 5B tokens
     uint256 constant ETH_PRICE = 4200 * 1e8; // $4200
     uint256 constant VOUCHER_LIMIT = 10000 * 1e8; // $10000 limit
@@ -43,21 +41,18 @@ contract AuthorizerIntegrationTest is Test {
         
         // Deploy contracts
         escrowToken = new EscrowToken();
-        kyc = new SimpleKYC(owner);
         authorizer = new Authorizer(signer, owner);
         
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_TOKENS,
-            address(kyc)
+            MAX_TOKENS
         );
         
         // Set up presale
         escrowToken.mint(address(presale), MAX_TOKENS);
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
-        presale.setKYCRequired(false); // Disable old KYC for voucher tests
         
         // Start presale
         vm.warp(1762819200 + 1); // After launch date
@@ -429,9 +424,9 @@ contract AuthorizerIntegrationTest is Test {
         uint256 paymentAmount = ethAmount - gasCost;
         
         // Convert to USD (ETH price is $4200 with 8 decimals, ETH has 18 decimals)
-        uint256 usdValue = (paymentAmount * ETH_PRICE) / 1e18;
+        uint256 usdAmount = (paymentAmount * ETH_PRICE) / 1e18; // USD with 8 decimals
         
-        // Calculate tokens (presale rate has 18 decimals for tokens per USD)
-        return usdValue * PRESALE_RATE;
+        // Calculate tokens using voucher formula: (usdAmount * presaleRate) / 1e8
+        return (usdAmount * PRESALE_RATE) / 1e8;
     }
 }

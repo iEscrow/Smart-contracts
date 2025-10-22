@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "./SimpleKYC.sol";
 import "./Authorizer.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
@@ -27,10 +26,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     uint256 public presaleRate;  // Tokens per USD (18 decimals)
     uint256 public maxTokensToMint;
     uint256 public totalTokensMinted;
-    
-    // KYC integration
-    SimpleKYC public kycContract;
-    bool public kycRequired = true; // KYC is required by default
     
     // Authorizer integration for voucher-based purchases
     Authorizer public authorizer;
@@ -93,8 +88,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event RoundAdvanced(uint256 fromRound, uint256 toRound, uint256 timestamp);
     event EmergencyEnd(uint256 timestamp);
     event AutoStartTriggered(uint256 timestamp);
-    event KYCContractUpdated(address indexed oldContract, address indexed newContract);
-    event KYCRequirementUpdated(bool required);
     event GasBufferUpdated(uint256 oldBuffer, uint256 newBuffer);
     event MaxPurchasePerUserUpdated(uint256 oldMax, uint256 newMax);
     event AuthorizerUpdated(address indexed oldAuthorizer, address indexed newAuthorizer);
@@ -110,34 +103,22 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     constructor(
         address _presaleToken,
-        uint256 _presaleRate, // 0.0015 dollar per token && presaleRate = 666666666666666666; // 666.666... with 18 decimals
-        uint256 _maxTokensToMint, // 5 billion tokens to presale
-        address _kycContract
+        uint256 _presaleRate, // 0.0015 dollar per token => 666.666... tokens per USD with 18 decimals: ~666666666666666667000
+        uint256 _maxTokensToMint // 5 billion tokens to presale
     ) Ownable(msg.sender) {
         require(_presaleToken != address(0), "Invalid presale token");
         require(_presaleRate > 0, "Invalid presale rate");
         require(_maxTokensToMint > 0, "Invalid max tokens");
-        require(_kycContract != address(0), "Invalid KYC contract");
         
         presaleToken = IERC20(_presaleToken);
         presaleRate = _presaleRate;
         maxTokensToMint = _maxTokensToMint;
-        kycContract = SimpleKYC(_kycContract);
         
         // Initialize default token prices and limits
         _initializeDefaultTokens();
     }
     
     // ============ MODIFIERS ============
-    
-    /// @notice Modifier to check if KYC is verified for the beneficiary
-    /// @param beneficiary Address to check KYC status for
-    modifier onlyKYCVerified(address beneficiary) {
-        if (kycRequired) {
-            require(kycContract.isCurrentlyVerified(beneficiary), "KYC verification required");
-        }
-        _;
-    }
     
     // Initialize default token settings for UnityFinance presale
     function _initializeDefaultTokens() internal {
@@ -298,78 +279,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit RoundAdvanced(1, 2, block.timestamp);
     }
     
-    // ============ PURCHASE FUNCTIONS ============
-    
-    // Purchase with native currency (ETH on Ethereum, BNB on BSC)
-    function buyWithNative(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(msg.value > 0, "No native currency sent");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        
-        TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
-        require(nativePrice.isActive, "Native currency not accepted");
-        
-        // Estimate gas cost and deduct from payment
-        uint256 gasCost = _estimateGasCost();
-        require(msg.value > gasCost, "Insufficient payment after gas");
-        
-        uint256 paymentAmount = msg.value - gasCost;
-        uint256 tokenAmount = _calculateTokenAmount(NATIVE_ADDRESS, paymentAmount, beneficiary);
-        _processPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount);
-    }
-    
-    // Purchase with ERC20 tokens
-    function buyWithToken(
-        address token,
-        uint256 amount,
-        address beneficiary
-    ) public nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(amount > 0, "Invalid amount");
-        require(token != NATIVE_ADDRESS, "Use buyWithNative for native currency");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        require(beneficiary == msg.sender, "Beneficiary must be the same as the sender");
-        
-        TokenPrice memory tokenPrice = tokenPrices[token];
-        require(tokenPrice.isActive, "Token not accepted");
-        
-        // Check allowance and transfer tokens (SafeERC20 handles USDT compatibility)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        
-        uint256 tokenAmount = _calculateTokenAmount(token, amount, beneficiary);
-        _processPurchase(beneficiary, token, amount, tokenAmount);
-    }
-    
-    // Convenience functions for specific tokens
-    function buyWithWETH(uint256 amount, address beneficiary) external {
-        buyWithToken(WETH_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithWBNB(uint256 amount, address beneficiary) external {
-        buyWithToken(WBNB_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithLINK(uint256 amount, address beneficiary) external {
-        buyWithToken(LINK_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithWBTC(uint256 amount, address beneficiary) external {
-        buyWithToken(WBTC_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithUSDC(uint256 amount, address beneficiary) external {
-        buyWithToken(USDC_ADDRESS, amount, beneficiary);
-    }
-    
-    function buyWithUSDT(uint256 amount, address beneficiary) external {
-        buyWithToken(USDT_ADDRESS, amount, beneficiary);
-    }
+    // ============ VOUCHER-ONLY PURCHASE FUNCTIONS ============
+    // NOTE: All purchases MUST use vouchers (KYC verified off-chain)
+    // No direct purchase functions to prevent non-KYC purchases
     
     // ============ VOUCHER-BASED PURCHASE FUNCTIONS ============
     
@@ -473,16 +385,16 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         return (usdValue * presaleRate) ;
     }
     
-    /// @notice Calculate token amount for voucher purchases (USD amount already calculated)
+    /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
     function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
         
-        // Track USD spent for analytics (convert to 8 decimals)
-        totalUsdPurchased[beneficiary] += usdAmount * 1e8;
+        // Track USD spent for analytics (usdAmount already has 8 decimals)
+        totalUsdPurchased[beneficiary] += usdAmount;
         
-        // Calculate presale tokens using provided USD amount
-        return (usdAmount * presaleRate);
+        // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
+        return (usdAmount * presaleRate) / 1e8;
     }
     
     function _processPurchase(
@@ -906,38 +818,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit GasBufferUpdated(oldBuffer, _gasBuffer);
     }
     
-    // ============ KYC MANAGEMENT FUNCTIONS ============
-    
-    /// @notice Update the KYC contract address
-    /// @param _kycContract New KYC contract address
-    function updateKYCContract(address _kycContract) external onlyOwner {
-        require(_kycContract != address(0), "Invalid KYC contract");
-        address oldContract = address(kycContract);
-        kycContract = SimpleKYC(_kycContract);
-        emit KYCContractUpdated(oldContract, _kycContract);
-    }
-    
-    /// @notice Toggle KYC requirement on/off
-    /// @param _required Whether KYC verification is required
-    function setKYCRequired(bool _required) external onlyOwner {
-        kycRequired = _required;
-        emit KYCRequirementUpdated(_required);
-    }
-    
-    /// @notice Get KYC contract address and requirement status
-    /// @return kycAddress Address of the KYC contract
-    /// @return required Whether KYC is required
-    function getKYCInfo() external view returns (address kycAddress, bool required) {
-        kycAddress = address(kycContract);
-        required = kycRequired;
-    }
-    
-    /// @notice Check if a user is KYC verified
-    /// @param user Address to check KYC status for
-    /// @return verified Whether the user is KYC verified
-    function isUserKYCVerified(address user) external view returns (bool verified) {
-        return kycContract.isCurrentlyVerified(user);
-    }
     
     // ============ AUTHORIZER MANAGEMENT FUNCTIONS ============
     
@@ -986,16 +866,4 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         return authorizer.validateVoucher(voucher, signature, paymentToken, usdAmount);
     }
     
-    // Alternative implementation with fixed gas buffer
-    function buyWithNativeFixed(address beneficiary) external payable nonReentrant whenNotPaused onlyKYCVerified(beneficiary) {
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(msg.value > gasBuffer, "Insufficient payment after gas buffer");
-        
-        TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
-        require(nativePrice.isActive, "Native currency not accepted");
-        
-        uint256 paymentAmount = msg.value - gasBuffer;
-        uint256 tokenAmount = _calculateTokenAmount(NATIVE_ADDRESS, paymentAmount, beneficiary);
-        _processPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount);
-    }
 }
