@@ -41,6 +41,10 @@ contract EscrowMultiTreasuryTest is Test {
     event MarketingAllocationSet(address indexed recipient, uint256 allocation);
     event MarketingClaimed(address indexed recipient, uint256 amount, uint256 milestone);
     event TokensClaimed(address indexed beneficiary, uint256 amount, uint256 milestone);
+    event BeneficiaryAdded(address indexed beneficiary, uint256 allocation);
+    event BeneficiaryUpdated(address indexed beneficiary, uint256 newAllocation);
+    event BeneficiaryRemoved(address indexed beneficiary, uint256 allocation);
+    event AllocationRevoked(address indexed beneficiary, uint256 unvestedAmount);
 
     function setUp() public {
         // Initialize test accounts
@@ -253,7 +257,7 @@ contract EscrowMultiTreasuryTest is Test {
         assertEq(treasury.marketingLastClaimMilestone(), 1);
     }
 
-    function testMarketingClaimSameMilestone() public {
+    function testMarketingClaimSameMilestoneAfterInterval() public {
         fundTreasury();
 
         // Advance to first milestone and claim
@@ -372,28 +376,372 @@ contract EscrowMultiTreasuryTest is Test {
         assertEq(escrowToken.balanceOf(address(treasury)), expectedRemaining);
     }
 
-    function testTreasuryStats() public {
+    // ============ ADMIN FUNCTION TESTS ============
+
+    function testAddBeneficiaryBeforeLock() public {
         fundTreasury();
 
-        EscrowMultiTreasury.TreasuryStats memory stats = treasury.getTreasuryStats();
+        address newBeneficiary = makeAddr("newBeneficiary");
+        uint256 allocationAmount = 1_000_000 * 1e18; // 1M tokens
 
-        assertEq(stats.teamTotalAlloc, TEAM_ALLOCATION);
-        assertEq(stats.teamTotalClaim, 0);
-        assertEq(stats.teamTotalRemaining, TEAM_ALLOCATION);
-        assertEq(stats.lpTotalAlloc, LP_ALLOCATION);
-        assertEq(stats.lpTotalClaim, 0);
-        assertEq(stats.lpTotalRemaining, LP_ALLOCATION);
-        assertEq(stats.marketingTotalAlloc, MARKETING_ALLOCATION);
-        assertEq(stats.marketingTotalClaim, 0);
-        assertEq(stats.marketingTotalRemaining, MARKETING_ALLOCATION);
-        assertFalse(stats.globalLocked);
-        assertTrue(stats.globalFunded);
+        // TEAM_ALLOCATION is already fully allocated with initial beneficiaries
+        // Adding any more should exceed the limit
+        vm.expectRevert(EscrowMultiTreasury.ExceedsTotalAllocation.selector);
+        treasury.addBeneficiary(newBeneficiary, allocationAmount);
+    }
+
+    function testAddBeneficiaryExceedsAllocation() public {
+        fundTreasury();
+
+        // Try to add more than TEAM_ALLOCATION (1B tokens)
+        vm.expectRevert(EscrowMultiTreasury.ExceedsTotalAllocation.selector);
+        treasury.addBeneficiary(makeAddr("newBeneficiary"), TEAM_ALLOCATION + 1);
+    }
+
+    function testAddBeneficiaryZeroAmount() public {
+        fundTreasury();
+
+        vm.expectRevert(EscrowMultiTreasury.InvalidAmount.selector);
+        treasury.addBeneficiary(makeAddr("newBeneficiary"), 0);
+    }
+
+    function testAddBeneficiaryZeroAddress() public {
+        fundTreasury();
+
+        vm.expectRevert(EscrowMultiTreasury.InvalidAddress.selector);
+        treasury.addBeneficiary(address(0), 1_000_000 * 1e18);
+    }
+
+    function testAddBeneficiaryAfterLock() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        // This should revert because allocations are locked
+        vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
+        treasury.addBeneficiary(makeAddr("newBeneficiary"), 1_000_000 * 1e18);
+    }
+
+    function testRevokeAllocation() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Advance time past lock period
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+
+        treasury.revokeAllocation(firstBeneficiary);
+
+        // Verify allocation was revoked
+        (,,,,,, bool isActive, bool revoked) = treasury.getTeamBeneficiaryInfo(firstBeneficiary);
+        assertTrue(isActive); // Still active but revoked
+        assertTrue(revoked);
+    }
+
+    function testRevokeAllocationNotBeneficiary() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        vm.expectRevert(EscrowMultiTreasury.NotBeneficiary.selector);
+        treasury.revokeAllocation(makeAddr("newBeneficiary"));
+    }
+
+    function testLockAllocationsNotFunded() public {
+        vm.expectRevert(EscrowMultiTreasury.TreasuryNotFunded.selector);
+        treasury.lockAllocations();
+    }
+
+    function testLockAllocationsTwice() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
+        treasury.lockAllocations();
+    }
+
+    function testClaimForNotLocked() public {
+        fundTreasury();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        vm.expectRevert(EscrowMultiTreasury.AllocationsNotLocked.selector);
+        treasury.claimFor(firstBeneficiary);
+    }
+
+    function testClaimForNotBeneficiary() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        vm.expectRevert(EscrowMultiTreasury.NotBeneficiary.selector);
+        treasury.claimFor(makeAddr("newBeneficiary"));
+    }
+
+    function testClaimForNoTokensAvailable() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Advance time past all milestones
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + (TEAM_VESTING_MILESTONES * TEAM_VESTING_INTERVAL) + 1);
+
+        // Claim all available tokens
+        treasury.claimFor(firstBeneficiary);
+
+        // Try to claim again - should revert
+        vm.expectRevert(EscrowMultiTreasury.NoTokensAvailable.selector);
+        treasury.claimFor(firstBeneficiary);
+    }
+
+    function testMarketingClaimNotFunded() public {
+        vm.expectRevert(EscrowMultiTreasury.TreasuryNotFunded.selector);
+        treasury.claimMarketing();
+    }
+
+
+    function testGetTeamClaimableAmountRevoked() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Advance time and revoke
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+        treasury.revokeAllocation(firstBeneficiary);
+
+        // Claimable amount should be 0 for revoked beneficiary
+        assertEq(treasury.getTeamClaimableAmount(firstBeneficiary), 0);
+    }
+
+    function testGetTeamClaimableAmountNotActive() public {
+        address nonBeneficiary = makeAddr("nonBeneficiary");
+        assertEq(treasury.getTeamClaimableAmount(nonBeneficiary), 0);
+    }
+
+    // ============ EDGE CASE TESTS ============
+
+    function testMilestoneCalculationEdgeCases() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Test milestone 0 (before lock period)
+        assertEq(treasury.getTeamVestingSchedule().currentMilestone, 0);
+
+        // Test exactly at unlock time
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION);
+        assertEq(treasury.getTeamVestingSchedule().currentMilestone, 1);
+
+        // Test after first interval
+        vm.warp(block.timestamp + TEAM_VESTING_INTERVAL);
+        assertEq(treasury.getTeamVestingSchedule().currentMilestone, 2);
+
+        // Test after all milestones
+        vm.warp(block.timestamp + (TEAM_VESTING_MILESTONES - 1) * TEAM_VESTING_INTERVAL);
+        assertEq(treasury.getTeamVestingSchedule().currentMilestone, TEAM_VESTING_MILESTONES);
+    }
+
+    function testMarketingMilestoneEdgeCases() public {
+        // Test milestone 1 (immediately after deployment, before funding)
+        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 1);
+
+        fundTreasury();
+
+        // Test after funding (still milestone 1)
+        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 1);
+
+        // Test after first interval
+        vm.warp(block.timestamp + MARKETING_VESTING_INTERVAL);
+        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 2);
+
+        // Test after all milestones
+        vm.warp(block.timestamp + (MARKETING_VESTING_MILESTONES - 1) * MARKETING_VESTING_INTERVAL);
+        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, MARKETING_VESTING_MILESTONES);
+    }
+
+    function testTreasuryStatsAfterClaims() public {
+        fundTreasury();
+
+        // Get initial stats
+        EscrowMultiTreasury.TreasuryStats memory initialStats = treasury.getTreasuryStats();
+        assertEq(initialStats.teamTotalClaim, 0);
+        assertEq(initialStats.lpTotalClaim, 0);
+        assertEq(initialStats.marketingTotalClaim, 0);
+
+        // Claim LP tokens
+        treasury.claimLP();
+        EscrowMultiTreasury.TreasuryStats memory afterLpStats = treasury.getTreasuryStats();
+        assertEq(afterLpStats.lpTotalClaim, LP_ALLOCATION);
+
+        // Claim marketing tokens
+        vm.warp(block.timestamp + MARKETING_VESTING_INTERVAL / 2);
+        treasury.claimMarketing();
+        EscrowMultiTreasury.TreasuryStats memory afterMarketingStats = treasury.getTreasuryStats();
+        assertEq(afterMarketingStats.marketingTotalClaim, MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000);
+
+        // Lock and claim team tokens
+        treasury.lockAllocations();
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        treasury.claimFor(initialBeneficiaries[0]);
+        EscrowMultiTreasury.TreasuryStats memory finalStats = treasury.getTreasuryStats();
+        assertGt(finalStats.teamTotalClaim, 0);
+    }
+
+    function testGetContractInfo() public {
+        EscrowMultiTreasury.ContractInfo memory info = treasury.getContractInfo();
+
+        assertEq(info.tokenAddress, address(escrowToken));
+        assertEq(info.totalAllocation, TOTAL_ALLOCATION);
+        assertEq(info.teamAllocation, TEAM_ALLOCATION);
+        assertEq(info.lpAllocation, LP_ALLOCATION);
+        assertEq(info.marketingAllocation, MARKETING_ALLOCATION);
+        assertEq(info.teamLockDuration, TEAM_LOCK_DURATION);
+        assertEq(info.teamVestingInterval, TEAM_VESTING_INTERVAL);
+        assertEq(info.teamMilestones, TEAM_VESTING_MILESTONES);
+        assertEq(info.teamPercentPerMilestone, 2000); // TEAM_PERCENTAGE_PER_MILESTONE
+        assertEq(info.marketingVestingInterval, MARKETING_VESTING_INTERVAL);
+        assertEq(info.marketingMilestones, MARKETING_VESTING_MILESTONES);
+        assertEq(info.marketingPercentPerMilestone, MARKETING_PERCENTAGE_PER_MILESTONE);
+    }
+
+    function testGetTeamBeneficiaryInfoNotActive() public {
+        address nonBeneficiary = makeAddr("nonBeneficiary");
+
+        (uint256 totalAllocation, uint256 vestedAmount, uint256 claimedAmount, uint256 claimableAmount, uint256 remainingAmount, uint256 currentMilestone, bool isActive, bool revoked) = treasury.getTeamBeneficiaryInfo(nonBeneficiary);
+
+        assertEq(totalAllocation, 0);
+        assertEq(vestedAmount, 0);
+        assertEq(claimedAmount, 0);
+        assertEq(claimableAmount, 0);
+        assertEq(remainingAmount, 0);
+        assertEq(currentMilestone, treasury.getTeamVestingSchedule().currentMilestone);
+        assertFalse(isActive);
+        assertFalse(revoked);
+    }
+
+    function testMultipleClaimsInSameMilestone() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Advance to first milestone
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+
+        // Claim first time
+        treasury.claimFor(firstBeneficiary);
+
+        // Try to claim again in same milestone - should revert
+        vm.expectRevert(EscrowMultiTreasury.NoTokensAvailable.selector);
+        treasury.claimFor(firstBeneficiary);
+    }
+
+    function testClaimAfterRevocation() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Advance time and revoke
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+        treasury.revokeAllocation(firstBeneficiary);
+
+        // Try to claim after revocation - should revert
+        vm.expectRevert(EscrowMultiTreasury.AllocationAlreadyRevoked.selector);
+        treasury.claimFor(firstBeneficiary);
+    }
+
+    function testAllBeneficiariesData() public {
+        fundTreasury();
+
+        (address[] memory addresses, uint256[] memory allocations, uint256[] memory claimed, bool[] memory active) = treasury.getAllTeamBeneficiaries();
+
+        assertEq(addresses.length, 28); // Total initial beneficiaries
+        assertEq(allocations.length, 28);
+        assertEq(claimed.length, 28);
+        assertEq(active.length, 28);
+
+        // Check first beneficiary
+        assertEq(allocations[0], 10_000_000 * 1e18);
+        assertEq(claimed[0], 0);
+        assertTrue(active[0]);
+    }
+
+    function testNextUnlockTimeCalculations() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        // Before lock period
+        assertEq(treasury.getNextTeamUnlockTime(), treasury.teamFirstUnlockTime());
+
+        // Advance to first milestone
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+        assertEq(treasury.getNextTeamUnlockTime(), treasury.teamFirstUnlockTime() + TEAM_VESTING_INTERVAL);
+
+        // Advance past all milestones
+        vm.warp(block.timestamp + (TEAM_VESTING_MILESTONES - 1) * TEAM_VESTING_INTERVAL);
+        assertEq(treasury.getNextTeamUnlockTime(), 0); // No more unlocks
     }
 
     // ============ HELPER FUNCTIONS ============
 
-    function fundTreasury() internal {
+    function fundTreasury() public {
         escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
         treasury.fundTreasury();
+    }
+
+    function testGetTeamClaimableAmountEdgeCases() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Test claimable amount exactly at unlock time
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION);
+        uint256 claimableAtUnlock = treasury.getTeamClaimableAmount(firstBeneficiary);
+        assertEq(claimableAtUnlock, 2000000 * 1e18); // 20% of 10M
+
+        // Test claimable amount after partial claim
+        treasury.claimFor(firstBeneficiary);
+        assertEq(treasury.getTeamClaimableAmount(firstBeneficiary), 0);
+    }
+
+    function testMarketingClaimableAmountEdgeCases() public {
+        fundTreasury();
+
+        // Test claimable amount immediately after funding
+        assertEq(treasury.getMarketingClaimableAmount(), MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000);
+
+        // Test claimable amount after partial claim
+        treasury.claimMarketing();
+        assertEq(treasury.getMarketingClaimableAmount(), 0);
+    }
+
+    function testCalculationPrecision() public {
+        fundTreasury();
+        treasury.lockAllocations();
+
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Test exact milestone timing
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION);
+        uint256 claimable1 = treasury.getTeamClaimableAmount(firstBeneficiary);
+        assertEq(claimable1, 2000000 * 1e18); // Exactly 20%
+
+        // Test after one interval
+        vm.warp(block.timestamp + TEAM_VESTING_INTERVAL);
+        uint256 claimable2 = treasury.getTeamClaimableAmount(firstBeneficiary);
+        assertEq(claimable2, 4000000 * 1e18); // Exactly 40%
     }
 }
