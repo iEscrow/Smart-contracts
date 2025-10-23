@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "forge-std/Test.sol";
-import "../contracts/EscrowTeamTreasury.sol";
-import "../contracts/MockEscrowToken.sol";
-import "../contracts/MockEscrowTokenNoMint.sol";
+import "@forge-std/Test.sol";
+import "../EscrowTeamTreasury.sol";
+import "../MockEscrowToken.sol";
+import "../MockEscrowTokenNoMint.sol";
 
 contract EscrowTeamTreasuryTest is Test {
     EscrowTeamTreasury public treasury;
@@ -533,7 +533,7 @@ contract EscrowTeamTreasuryTest is Test {
             uint256 totalAlloc,
             uint256 totalClaim,
             uint256 totalRemaining,
-            ,
+            uint256 unallocated,
             uint256 beneficiaryCount,
             bool locked,
             bool funded
@@ -542,6 +542,8 @@ contract EscrowTeamTreasuryTest is Test {
         assertEq(totalAlloc, treasury.totalAllocated());
         assertEq(totalClaim, treasury.totalClaimed());
         assertEq(totalRemaining, treasury.totalAllocated() - treasury.totalClaimed());
+        assertGe(unallocated, 0); // Should be non-negative
+        assertGe(beneficiaryCount, 0); // Should be non-negative
         assertTrue(locked);
         assertTrue(funded);
     }
@@ -684,6 +686,17 @@ contract EscrowTeamTreasuryTest is Test {
         fundTreasuryAndLock();
 
         (address[] memory addresses, uint256[] memory allocations, uint256[] memory claimed, bool[] memory active) = treasury.getAllBeneficiaries();
+
+        // Verify addresses array
+        assertGt(addresses.length, 0, "Should have at least one beneficiary");
+        assertEq(addresses.length, allocations.length, "Addresses and allocations arrays should have same length");
+        assertEq(addresses.length, claimed.length, "Addresses and claimed arrays should have same length");
+        assertEq(addresses.length, active.length, "Addresses and active arrays should have same length");
+
+        // Verify all addresses are valid (non-zero)
+        for (uint256 i = 0; i < addresses.length; i++) {
+            assertNotEq(addresses[i], address(0), "Beneficiary address should not be zero");
+        }
 
         assertEq(allocations[0], 10000000 * 1e18);
         assertEq(claimed[0], 0);
