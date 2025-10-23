@@ -13,10 +13,8 @@ pragma solidity 0.8.20;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
 
-contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
+contract EscrowTeamTreasury is Ownable {
     using SafeERC20 for IERC20;
     
     // ============ CONSTANTS ============
@@ -25,7 +23,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant TOTAL_ALLOCATION = 1_000_000_000 * 1e18;
     
     /// @notice Initial lock period: 3 years
-    uint256 public constant LOCK_DURATION = 1095 days; // 3 years
+    uint256 public constant LOCK_DURATION = 3 * 365 days; // 3 years exactly
     
     /// @notice Vesting interval: 6 months
     uint256 public constant VESTING_INTERVAL = 180 days;
@@ -43,13 +41,11 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     /// @dev Tracks allocation, claims, and status for each beneficiary
     /// @param totalAllocation Total tokens allocated to this beneficiary
     /// @param claimedAmount Amount of tokens already claimed
-    /// @param lastClaimMilestone Last milestone when tokens were claimed (0-4)
     /// @param isActive Whether beneficiary is currently active
     /// @param revoked Whether allocation has been revoked by admin
     struct Beneficiary {
         uint256 totalAllocation;      // Total tokens allocated
         uint256 claimedAmount;        // Amount already claimed
-        uint256 lastClaimMilestone;   // Last milestone claimed (0-4)
         bool isActive;                // Whether beneficiary is active
         bool revoked;                 // Whether allocation was revoked
     }
@@ -79,13 +75,6 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     
     /// @notice Whether allocations are locked (no more changes)
     bool public allocationsLocked;
-    
-    /**
-     * @notice Get the list of initial beneficiary addresses
-     */
-    function getInitialBeneficiaries() external view returns (address[] memory) {
-        return initialBeneficiaries;
-    }
     
     /// @notice Treasury funded status
     bool public treasuryFunded;
@@ -170,11 +159,6 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     /// @param timestamp Time when allocations were locked
     event AllocationsLocked(uint256 timestamp);
     
-    /// @notice Emitted when emergency withdrawal occurs
-    /// @param token Address of token withdrawn
-    /// @param amount Amount withdrawn
-    event EmergencyWithdraw(address indexed token, uint256 amount);
-    
     // ============ ERRORS ============
     
     /// @notice Error thrown when address is invalid (zero address)
@@ -237,15 +221,12 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
             beneficiaries[initialBeneficiaries[i]] = Beneficiary({
                 totalAllocation: initialAllocations[i],
                 claimedAmount: 0,
-                lastClaimMilestone: 0,
                 isActive: true,
                 revoked: false
             });
             beneficiaryList.push(initialBeneficiaries[i]);
             totalAllocated += initialAllocations[i];
         }
-        
-        emit TreasuryFunded(0, block.timestamp); // Deployment event
     }
     
     // ============ ADMIN FUNCTIONS ============
@@ -288,7 +269,6 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         beneficiaries[beneficiary] = Beneficiary({
             totalAllocation: allocation,
             claimedAmount: 0,
-            lastClaimMilestone: 0,
             isActive: true,
             revoked: false
         });
@@ -397,80 +377,25 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     }
     
     /**
-     * @notice Pause contract (emergency)
-     */
-    function pause() external onlyOwner {
-        _pause();
-    }
-    
-    /**
-     * @notice Unpause contract
-     */
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-    
-    /**
-     * @notice Emergency withdraw (only unallocated tokens)
-     */
-    function emergencyWithdraw() external onlyOwner {
-        uint256 balance = escrowToken.balanceOf(address(this));
-        uint256 locked = totalAllocated - totalClaimed;
-        
-        if (balance <= locked) revert InsufficientBalance();
-        
-        uint256 withdrawable = balance - locked;
-        escrowToken.safeTransfer(owner(), withdrawable);
-        
-        emit EmergencyWithdraw(address(escrowToken), withdrawable);
-    }
-    
-    // ============ BENEFICIARY FUNCTIONS ============
-    
-    /**
-     * @notice Claim vested tokens
-     */
-    function claimTokens() external nonReentrant whenNotPaused {
-        if (!allocationsLocked) revert AllocationsNotLocked();
-        if (!beneficiaries[msg.sender].isActive) revert NotBeneficiary();
-        
-        Beneficiary storage b = beneficiaries[msg.sender];
-        if (b.revoked) revert AllocationAlreadyRevoked();
-        
-        uint256 claimable = getClaimableAmount(msg.sender);
-        if (claimable == 0) revert NoTokensAvailable();
-        
-        uint256 currentMilestone = _getCurrentMilestone();
-        b.claimedAmount += claimable;
-        b.lastClaimMilestone = currentMilestone;
-        totalClaimed += claimable;
-        
-        escrowToken.safeTransfer(msg.sender, claimable);
-        
-        emit TokensClaimed(msg.sender, claimable, currentMilestone);
-    }
-    
-    /**
      * @notice Claim tokens for specific beneficiary (anyone can trigger)
      * @param beneficiary Address to claim for
      */
-    function claimFor(address beneficiary) external nonReentrant whenNotPaused {
+    function claimFor(address beneficiary) external {
         if (!allocationsLocked) revert AllocationsNotLocked();
         if (!beneficiaries[beneficiary].isActive) revert NotBeneficiary();
-        
+
         Beneficiary storage b = beneficiaries[beneficiary];
         if (b.revoked) revert AllocationAlreadyRevoked();
-        
+
         uint256 claimable = getClaimableAmount(beneficiary);
         if (claimable == 0) revert NoTokensAvailable();
-        
+
         uint256 currentMilestone = _getCurrentMilestone();
         b.claimedAmount += claimable;
-        b.lastClaimMilestone = currentMilestone;
         totalClaimed += claimable;
-        
+
         escrowToken.safeTransfer(beneficiary, claimable);
-        
+
         emit TokensClaimed(beneficiary, claimable, currentMilestone);
     }
     
@@ -529,13 +454,13 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
         uint256 vested = _calculateVestedAmount(beneficiary);
         return vested > b.claimedAmount ? vested - b.claimedAmount : 0;
     }
-    
+
     /**
      * @notice Get beneficiary details
      */
-    function getBeneficiaryInfo(address beneficiary) 
-        external 
-        view 
+    function getBeneficiaryInfo(address beneficiary)
+        external
+        view
         returns (
             uint256 totalAllocation,
             uint256 vestedAmount,
@@ -545,15 +470,20 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
             uint256 currentMilestone,
             bool isActive,
             bool revoked
-        ) 
+        )
     {
         Beneficiary memory b = beneficiaries[beneficiary];
-        
+
+        // If beneficiary is not active, return zeros for allocation-related fields
+        if (!b.isActive) {
+            return (0, 0, 0, 0, 0, _getCurrentMilestone(), false, false);
+        }
+
         vestedAmount = _calculateVestedAmount(beneficiary);
         claimableAmount = getClaimableAmount(beneficiary);
         remainingAmount = b.totalAllocation - b.claimedAmount;
         currentMilestone = _getCurrentMilestone();
-        
+
         return (
             b.totalAllocation,
             vestedAmount,
@@ -565,11 +495,7 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
             b.revoked
         );
     }
-    
-    /**
-     * @notice Get all beneficiaries
-     * @dev Optimized for gas: uses unchecked operations where safe
-     */
+
     function getAllBeneficiaries() 
         external 
         view 
@@ -602,33 +528,25 @@ contract EscrowTeamTreasury is Ownable, ReentrancyGuard, Pausable {
     }
     
     /**
-     * @notice Get vesting schedule info
+     * @notice Get vesting schedule info (gas optimized)
      */
-    function getVestingSchedule() 
-        external 
-        view 
+    function getVestingSchedule()
+        external
+        view
         returns (
             uint256 startTime,
             uint256 firstUnlock,
             uint256 currentMilestone,
             uint256 totalMilestones,
-            uint256 intervalDays,
-            uint256[] memory unlockTimes
-        ) 
+            uint256 intervalDays
+        )
     {
-        unlockTimes = new uint256[](VESTING_MILESTONES);
-        
-        for (uint256 i = 0; i < VESTING_MILESTONES; i++) {
-            unlockTimes[i] = firstUnlockTime + (i * VESTING_INTERVAL);
-        }
-        
         return (
             treasuryStartTime,
             firstUnlockTime,
             _getCurrentMilestone(),
             VESTING_MILESTONES,
-            VESTING_INTERVAL / 1 days,
-            unlockTimes
+            VESTING_INTERVAL / 1 days
         );
     }
     

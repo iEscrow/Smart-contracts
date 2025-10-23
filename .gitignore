@@ -4,15 +4,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Hardhat
-artifacts/
+# Foundry
+out/
 cache/
-deployments/
-
-# Coverage
-coverage/
-coverage.json
-*.lcov
+broadcast/
 
 # Environment variables
 .env
