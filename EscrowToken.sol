@@ -21,6 +21,15 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @notice Allocation for presale
     /// @dev 5 billion tokens
     uint256 public constant PRESALE_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion for presale
+    /// @notice Allocation for marketing, CEX listings and partnerships
+    uint256 public constant MARKETING_ALLOCATION = 3_400_000_000 * 1e18; // 3.4 billion for marketing/partnerships
+    /// @notice Allocation for initial DEX liquidity
+    uint256 public constant LIQUIDITY_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion for liquidity provision
+    
+    /// @notice Wallet receiving the marketing/partnership allocation
+    address public constant MARKETING_WALLET = 0xa315b46cA80982278eD28A3496718B1524Df467b;
+    /// @notice Wallet receiving the initial liquidity allocation
+    address public constant LIQUIDITY_WALLET = 0x5f5868Bb7E708aAb9C25c80AEBFA0131735233af;
     
     // ============ STATE VARIABLES ============
     
@@ -60,7 +69,18 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         ERC20Permit("Escrow Token")
         Ownable(msg.sender)
     {
-        // Token starts with 0 supply - all tokens minted on demand
+        _mintInitialAllocation(MARKETING_WALLET, MARKETING_ALLOCATION);
+        _mintInitialAllocation(LIQUIDITY_WALLET, LIQUIDITY_ALLOCATION);
+    }
+    
+    /// @notice Helper for constructor to mint initial allocations and track totals
+    /// @param to Address receiving the allocation
+    /// @param amount Amount of tokens to mint
+    function _mintInitialAllocation(address to, uint256 amount) internal {
+        require(to != address(0), "Invalid allocation recipient");
+        totalMinted += amount;
+        require(totalMinted <= MAX_SUPPLY, "Exceeds max supply");
+        _mint(to, amount);
     }
     
     // ============ MINTING FUNCTIONS ============

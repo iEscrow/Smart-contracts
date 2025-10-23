@@ -289,14 +289,21 @@ contract MultiTokenPresaleTest is Test {
         assertTrue(presale.getRemainingTokens() < MAX_TOKENS);
     }
     
-    function testTotalTokensMinted() public {
-        _startPresale();
+    function testInitialAllocationsMinted() public {
+        uint256 marketingAllocation = escrowToken.MARKETING_ALLOCATION();
+        uint256 liquidityAllocation = escrowToken.LIQUIDITY_ALLOCATION();
         
-        assertEq(presale.totalTokensMinted(), 0);
+        assertEq(
+            escrowToken.balanceOf(escrowToken.MARKETING_WALLET()),
+            marketingAllocation
+        );
+        assertEq(
+            escrowToken.balanceOf(escrowToken.LIQUIDITY_WALLET()),
+            liquidityAllocation
+        );
         
-        _makePurchase(buyer1, 0.01 ether, 0);
-        
-        assertTrue(presale.totalTokensMinted() > 0);
+        uint256 expectedTotalMinted = marketingAllocation + liquidityAllocation + MAX_TOKENS;
+        assertEq(escrowToken.totalMinted(), expectedTotalMinted);
     }
     
     // ========== CLAIM TESTS ==========
