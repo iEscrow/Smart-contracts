@@ -15,6 +15,7 @@ contract AuthorizerIntegrationTest is Test {
     address public buyer = address(0x3);
     address public beneficiary = address(0x4);
     address public unauthorized = address(0x5);
+    address public staking;
     
     uint256 public signerPrivateKey = 0xB0B;
     address public signer = vm.addr(signerPrivateKey); // Derive address from private key
@@ -37,6 +38,7 @@ contract AuthorizerIntegrationTest is Test {
     );
     
     function setUp() public {
+        staking = vm.addr(0x6);
         vm.startPrank(owner);
         
         // Deploy contracts
@@ -50,7 +52,7 @@ contract AuthorizerIntegrationTest is Test {
         );
         
         // Set up presale
-        escrowToken.mint(address(presale), MAX_TOKENS);
+        escrowToken.mintPresaleAllocation(address(presale), staking);
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         

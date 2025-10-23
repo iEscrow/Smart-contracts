@@ -96,10 +96,12 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     // ============ MINTING FUNCTIONS ============
     
-    /// @notice Mint the presale allocation (5B tokens) to presale contract
+    /// @notice Mint the presale allocation (5B tokens), set staking contract, and complete bootstrap
     /// @param presaleContract Address of the presale contract
-    function mintPresaleAllocation(address presaleContract) external onlyOwner onlyBeforeBootstrap {
+    /// @param staking Address of the staking contract authorised to mint rewards
+    function mintPresaleAllocation(address presaleContract, address staking) external onlyOwner onlyBeforeBootstrap {
         require(presaleContract != address(0), "Invalid presale contract");
+        require(staking != address(0), "Invalid staking contract");
         require(!mintingFinalized, "Minting finalized");
         require(!presaleAllocationMinted, "Presale allocation already minted");
         
@@ -108,22 +110,12 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         
         _mint(presaleContract, PRESALE_ALLOCATION);
         emit PresaleAllocationMinted(presaleContract, PRESALE_ALLOCATION);
+        
+        stakingContract = staking;
+        bootstrapComplete = true;
+        emit BootstrapCompleted(staking);
     }
     
-    /// @notice Mint tokens to specified address (owner only, for team/treasury/LP allocations)
-    /// @param to Address to mint tokens to
-    /// @param amount Amount of tokens to mint
-    function mint(address to, uint256 amount) external onlyOwner onlyBeforeBootstrap {
-        require(to != address(0), "Invalid recipient");
-        require(!mintingFinalized, "Minting finalized");
-        require(amount > 0, "Invalid amount");
-
-        totalMinted += amount;
-        require(totalMinted <= MAX_SUPPLY, "Exceeds max supply");
-
-        _mint(to, amount);
-    }
-
     /// @notice Mint rewards, callable only by the staking contract after bootstrap
     /// @param to Address receiving the freshly minted tokens
     /// @param amount Amount of tokens to mint
@@ -137,15 +129,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         require(totalMinted <= MAX_SUPPLY, "Exceeds max supply");
 
         _mint(to, amount);
-    }
-
-    /// @notice Complete bootstrap phase by locking owner minting and registering staking contract
-    /// @param staking Address of the staking contract that will handle reward minting
-    function completeBootstrap(address staking) external onlyOwner onlyBeforeBootstrap {
-        require(staking != address(0), "Invalid staking contract");
-        stakingContract = staking;
-        bootstrapComplete = true;
-        emit BootstrapCompleted(staking);
     }
 
     /// @notice Finalize minting - prevents any future minting
