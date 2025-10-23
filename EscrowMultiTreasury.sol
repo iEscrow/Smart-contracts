@@ -47,41 +47,27 @@ contract EscrowMultiTreasury is Ownable {
 
     uint256 public constant BASIS_POINTS = 10000;
 
-    /// @notice Structure for treasury statistics
+    /// @notice Structure for essential treasury statistics (optimized for gas)
     struct TreasuryStats {
-        uint256 teamTotalAlloc;
-        uint256 teamTotalClaim;
-        uint256 teamTotalRemaining;
-        uint256 lpTotalAlloc;
-        uint256 lpTotalClaim;
-        uint256 lpTotalRemaining;
-        uint256 marketingTotalAlloc;
-        uint256 marketingTotalClaim;
-        uint256 marketingTotalRemaining;
-        uint256 globalUnallocated;
-        uint256 globalBeneficiaryCount;
-        bool globalLocked;
-        bool globalFunded;
+        uint256 totalAllocated;     // Sum of all allocations (team + lp + marketing)
+        uint256 totalClaimed;       // Sum of all claimed tokens
+        uint256 contractBalance;    // Current token balance
+        uint256 teamBeneficiaryCount;
+        bool allocationsLocked;
+        bool treasuryFunded;
     }
 
-    /// @notice Structure for team vesting schedule info
-    struct TeamVestingSchedule {
+    /// @notice Structure for vesting schedule info (used for both team and marketing)
+    struct VestingSchedule {
         uint256 startTime;
-        uint256 firstUnlock;
+        uint256 firstUnlock;        // Only used for team (0 for marketing)
         uint256 currentMilestone;
         uint256 totalMilestones;
         uint256 intervalDays;
+        bool isTeamSchedule;       // True for team, false for marketing
     }
 
-    /// @notice Structure for marketing vesting schedule info
-    struct MarketingVestingSchedule {
-        uint256 startTime;
-        uint256 currentMilestone;
-        uint256 totalMilestones;
-        uint256 intervalDays;
-    }
-
-    /// @notice Structure for comprehensive contract info
+    /// @notice Structure for essential contract info (optimized)
     struct ContractInfo {
         address tokenAddress;
         uint256 totalAllocation;
@@ -140,8 +126,8 @@ contract EscrowMultiTreasury is Ownable {
     /// @notice Total claimed by team beneficiaries
     uint256 public teamTotalClaimed;
 
-    /// @notice Whether team allocations are locked
-    bool public teamAllocationsLocked;
+    /// @notice Packed boolean flags (bit 0: lpAllocationActive, bit 1: marketingAllocationActive, bit 2: treasuryFunded, bit 3: teamAllocationsLocked)
+    uint256 private allocationFlags;
 
     // ============ LP ALLOCATION STATE ============
 
@@ -153,9 +139,6 @@ contract EscrowMultiTreasury is Ownable {
 
     /// @notice LP tokens claimed
     uint256 public lpClaimed;
-
-    /// @notice Whether LP allocation is active
-    bool public lpAllocationActive;
 
     // ============ MARKETING ALLOCATION STATE ============
 
@@ -171,56 +154,71 @@ contract EscrowMultiTreasury is Ownable {
     /// @notice Marketing last claim milestone
     uint256 public marketingLastClaimMilestone;
 
-    /// @notice Whether marketing allocation is active
-    bool public marketingAllocationActive;
+    // ============ HARDCODED BENEFICIARY DATA ============
 
-    /// @notice Global treasury funded status
-    bool public treasuryFunded;
+    /// @notice Fixed team beneficiary addresses (28 total)
+    address[28] private teamBeneficiaryAddresses;
 
-    /// @notice List of initial beneficiary addresses
-    address[] private initialBeneficiaries = [
-        0x04435410a78192baAfa00c72C659aD3187a2C2cF,
-        0x9005132849bC9585A948269D96F23f56e5981A61,
-        0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74,
-        0x03a54ADc7101393776C200529A454b4cDc3545C5,
-        0x04D83B2BdF89fe4C781Ec8aE3D672c610080B319,
-        0xA5F415dA5b5E63aFc8f0c378F047671592A842Fe,
-        0x77aB60050DFA1E2764366BC52A83EEab1E1a35ad,
-        0x543ed850e2df486e2B37A602926C12b97b910405,
-        0xC259811079610E1a60Bf5ebCb7d0F8Ac3857b1d6,
-        0x68f5d8e68abDf9c6C0233DE2bdAda5e18CC6634d,
-        0x30D3d7C9A4276a5A63EE9c36d6C69CEA3e6B08da,
-        0x69873ef24F48205036177b03628f8727b8445999,
-        0x790823b7bd58f1b84D99Cd7d474C24Af894deE2c,
-        0x9f1Ec9342a567E16703076385763f49aABFFA15e,
-        0x687B309a341B453084539f83081B292462a92c4D,
-        0x01553Bc974Ed86f892813E535B1Ed03a384212F5,
-        0xE0C7f8329F0d401bE419A2F15371aB2DAfe3f7c4,
-        0x6fBa9db2Ca25cC280ec559aD44540bD7B061a66B,
-        0xfa44D3E91aBf1327566a2c34E9f46C332B412634,
-        0x5d8d1EA81af164051F341fB6224F243775Dea07a,
-        0x37006C70d09fc59abF3EeE7a1B244d6c831cb281,
-        0xC6808526ed02162668Ec35D7C0b16f1C99802534,
-        0x91C665974574a51bd9Eb23aE79B26C58415eF6b2,
-        0x658ba47F95541d8919C46b3488dE12be7587167D,
-        0x54920dEb99489F36AB7204F727E20B72fB391e7b,
-        0x4C11b6D0d1aD06F95966372014097AE3411cE7b9,
-        0x277cAebe8E2d2284752d75853Fe70aF00dE893ac,
-        0x2C9760E45abB8879A6ac86d3CA19012Cf513738d
-    ];
+    /// @notice Fixed team beneficiary allocations (10M or 50M tokens each)
+    uint256[28] private teamBeneficiaryAllocations;
 
-    /// @notice Corresponding allocations (10M or 50M tokens each)
-    uint256[] private initialAllocations = [
-        10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
-        10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
-        10_000_000 * 1e18, 10_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
-        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
-        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
-        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
-        50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18
-    ];
+    // ============ HELPER FUNCTIONS ============
 
-    // ============ EVENTS ============
+    /// @notice Check if LP allocation is active
+    function lpAllocationActive() public view returns (bool) {
+        return (allocationFlags & 1) != 0;
+    }
+
+    /// @notice Check if marketing allocation is active
+    function marketingAllocationActive() public view returns (bool) {
+        return (allocationFlags & 2) != 0;
+    }
+
+    /// @notice Check if treasury is funded
+    function treasuryFunded() public view returns (bool) {
+        return (allocationFlags & 4) != 0;
+    }
+
+    /// @notice Check if team allocations are locked
+    function teamAllocationsLocked() public view returns (bool) {
+        return (allocationFlags & 8) != 0;
+    }
+
+    /// @notice Set LP allocation active status
+    function _setLpAllocationActive(bool active) internal {
+        if (active) {
+            allocationFlags |= 1;
+        } else {
+            allocationFlags &= type(uint256).max - 1;
+        }
+    }
+
+    /// @notice Set marketing allocation active status
+    function _setMarketingAllocationActive(bool active) internal {
+        if (active) {
+            allocationFlags |= 2;
+        } else {
+            allocationFlags &= type(uint256).max - 2;
+        }
+    }
+
+    /// @notice Set treasury funded status
+    function _setTreasuryFunded(bool funded) internal {
+        if (funded) {
+            allocationFlags |= 4;
+        } else {
+            allocationFlags &= type(uint256).max - 4;
+        }
+    }
+
+    /// @notice Set team allocations locked status
+    function _setTeamAllocationsLocked(bool locked) internal {
+        if (locked) {
+            allocationFlags |= 8;
+        } else {
+            allocationFlags &= type(uint256).max - 8;
+        }
+    }
 
     /// @notice Emitted when treasury is funded with tokens
     /// @param amount Amount of tokens funded
@@ -302,17 +300,11 @@ contract EscrowMultiTreasury is Ownable {
     /// @notice Error thrown when treasury is already funded
     error TreasuryAlreadyFunded();
 
-    /// @notice Error thrown when lock period has not ended
-    error LockPeriodNotEnded();
-
     /// @notice Error thrown when no tokens are available to claim
     error NoTokensAvailable();
 
     /// @notice Error thrown when allocation has already been revoked
     error AllocationAlreadyRevoked();
-
-    /// @notice Error thrown when milestone value is invalid
-    error InvalidMilestone();
 
     /// @notice Error thrown when balance is insufficient for operation
     error InsufficientBalance();
@@ -334,26 +326,98 @@ contract EscrowMultiTreasury is Ownable {
         // Set up LP allocation
         lpRecipient = 0x5f5868Bb7E708aAb9C25c80AEBFA0131735233af;
         lpAllocation = LP_ALLOCATION;
-        lpAllocationActive = true;
+        _setLpAllocationActive(true);
         emit LPAllocationSet(lpRecipient, lpAllocation);
 
         // Set up Marketing allocation
         marketingRecipient = 0xa315b46cA80982278eD28A3496718B1524Df467b;
         marketingAllocation = MARKETING_ALLOCATION;
-        marketingAllocationActive = true;
+        _setMarketingAllocationActive(true);
         marketingLastClaimMilestone = 0;
         emit MarketingAllocationSet(marketingRecipient, marketingAllocation);
 
-        // Initialize team beneficiaries from hardcoded lists
-        for (uint256 i = 0; i < initialBeneficiaries.length; i++) {
-            teamBeneficiaries[initialBeneficiaries[i]] = Beneficiary({
-                totalAllocation: initialAllocations[i],
+        // Initialize team beneficiary data
+        teamBeneficiaryAddresses = [
+            0x04435410a78192baAfa00c72C659aD3187a2C2cF,
+            0x9005132849bC9585A948269D96F23f56e5981A61,
+            0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74,
+            0x03a54ADc7101393776C200529A454b4cDc3545C5,
+            0x04D83B2BdF89fe4C781Ec8aE3D672c610080B319,
+            0xA5F415dA5b5E63aFc8f0c378F047671592A842Fe,
+            0x77aB60050DFA1E2764366BC52A83EEab1E1a35ad,
+            0x543ed850e2df486e2B37A602926C12b97b910405,
+            0xC259811079610E1a60Bf5ebCb7d0F8Ac3857b1d6,
+            0x68f5d8e68abDf9c6C0233DE2bdAda5e18CC6634d,
+            0x30D3d7C9A4276a5A63EE9c36d6C69CEA3e6B08da,
+            0x69873ef24F48205036177b03628f8727b8445999,
+            0x790823b7bd58f1b84D99Cd7d474C24Af894deE2c,
+            0x9f1Ec9342a567E16703076385763f49aABFFA15e,
+            0x687B309a341B453084539f83081B292462a92c4D,
+            0x01553Bc974Ed86f892813E535B1Ed03a384212F5,
+            0xE0C7f8329F0d401bE419A2F15371aB2DAfe3f7c4,
+            0x6fBa9db2Ca25cC280ec559aD44540bD7B061a66B,
+            0xfa44D3E91aBf1327566a2c34E9f46C332B412634,
+            0x5d8d1EA81af164051F341fB6224F243775Dea07a,
+            0x37006C70d09fc59abF3EeE7a1B244d6c831cb281,
+            0xC6808526ed02162668Ec35D7C0b16f1C99802534,
+            0x91C665974574a51bd9Eb23aE79B26C58415eF6b2,
+            0x658ba47F95541d8919C46b3488dE12be7587167D,
+            0x54920dEb99489F36AB7204F727E20B72fB391e7b,
+            0x4C11b6D0d1aD06F95966372014097AE3411cE7b9,
+            0x277cAebe8E2d2284752d75853Fe70aF00dE893ac,
+            0x2C9760E45abB8879A6ac86d3CA19012Cf513738d
+        ];
+
+        teamBeneficiaryAllocations = [
+            10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
+            10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18, 10_000_000 * 1e18,
+            10_000_000 * 1e18, 10_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+            50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+            50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+            50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18,
+            50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18, 50_000_000 * 1e18
+        ];
+
+        // Initialize team beneficiaries from hardcoded constants
+        for (uint256 i = 0; i < teamBeneficiaryAddresses.length; i++) {
+            teamBeneficiaries[teamBeneficiaryAddresses[i]] = Beneficiary({
+                totalAllocation: teamBeneficiaryAllocations[i],
                 claimedAmount: 0,
                 isActive: true,
                 revoked: false
             });
-            teamBeneficiaryList.push(initialBeneficiaries[i]);
-            teamTotalAllocated += initialAllocations[i];
+            teamBeneficiaryList.push(teamBeneficiaryAddresses[i]);
+            teamTotalAllocated += teamBeneficiaryAllocations[i];
+        }
+    }
+
+    /**
+     * @notice Initialize contract with test beneficiaries (only for testing)
+     * @param beneficiaries Array of beneficiary addresses
+     * @param allocations Array of token allocations
+     */
+    function initializeTestBeneficiaries(address[] calldata beneficiaries, uint256[] calldata allocations)
+        external
+        onlyOwner
+    {
+        require(!treasuryFunded(), "Treasury already funded");
+        require(beneficiaries.length == allocations.length, "Array length mismatch");
+        require(beneficiaries.length <= 50, "Too many beneficiaries");
+
+        for (uint256 i = 0; i < beneficiaries.length; i++) {
+            require(beneficiaries[i] != address(0), "Invalid address");
+            require(allocations[i] > 0, "Invalid allocation");
+            require(!teamBeneficiaries[beneficiaries[i]].isActive, "Already allocated");
+
+            teamBeneficiaries[beneficiaries[i]] = Beneficiary({
+                totalAllocation: allocations[i],
+                claimedAmount: 0,
+                isActive: true,
+                revoked: false
+            });
+
+            teamBeneficiaryList.push(beneficiaries[i]);
+            teamTotalAllocated += allocations[i];
         }
     }
 
@@ -362,14 +426,14 @@ contract EscrowMultiTreasury is Ownable {
     /**
      * @notice Fund treasury with 9.4 billion ESCROW tokens (one-time only)
      */
-    function fundTreasury() external onlyOwner {
-        if (treasuryFunded) revert TreasuryAlreadyFunded();
+    function fundTreasury() external {
+        if (treasuryFunded()) revert TreasuryAlreadyFunded();
 
         uint256 balance = escrowToken.balanceOf(msg.sender);
         if (balance < TOTAL_ALLOCATION) revert InsufficientBalance();
 
         escrowToken.safeTransferFrom(msg.sender, address(this), TOTAL_ALLOCATION);
-        treasuryFunded = true;
+        _setTreasuryFunded(true);
 
         emit TreasuryFunded(TOTAL_ALLOCATION, block.timestamp);
     }
@@ -383,8 +447,8 @@ contract EscrowMultiTreasury is Ownable {
         external
         onlyOwner
     {
-        if (teamAllocationsLocked) revert AllocationsAlreadyLocked();
-        if (!treasuryFunded) revert TreasuryNotFunded();
+        if (teamAllocationsLocked()) revert AllocationsAlreadyLocked();
+        if (!treasuryFunded()) revert TreasuryNotFunded();
         if (beneficiary == address(0)) revert InvalidAddress();
         if (allocation == 0) revert InvalidAmount();
         if (teamBeneficiaries[beneficiary].isActive) revert AlreadyAllocated();
@@ -413,7 +477,7 @@ contract EscrowMultiTreasury is Ownable {
      * @param beneficiary Beneficiary address
      */
     function removeBeneficiary(address beneficiary) external onlyOwner {
-        if (teamAllocationsLocked) revert AllocationsAlreadyLocked();
+        if (teamAllocationsLocked()) revert AllocationsAlreadyLocked();
         if (!teamBeneficiaries[beneficiary].isActive) revert NotBeneficiary();
 
         Beneficiary storage b = teamBeneficiaries[beneficiary];
@@ -440,11 +504,11 @@ contract EscrowMultiTreasury is Ownable {
      * @notice Lock team allocations (no more changes allowed)
      */
     function lockAllocations() external onlyOwner {
-        if (teamAllocationsLocked) revert AllocationsAlreadyLocked();
-        if (!treasuryFunded) revert TreasuryNotFunded();
+        if (teamAllocationsLocked()) revert AllocationsAlreadyLocked();
+        if (!treasuryFunded()) revert TreasuryNotFunded();
         if (teamTotalAllocated == 0) revert InvalidAmount();
 
-        teamAllocationsLocked = true;
+        _setTeamAllocationsLocked(true);
 
         emit AllocationsLocked(block.timestamp);
     }
@@ -482,7 +546,7 @@ contract EscrowMultiTreasury is Ownable {
      * @param beneficiary Address to claim for
      */
     function claimFor(address beneficiary) external {
-        if (!teamAllocationsLocked) revert AllocationsNotLocked();
+        if (!teamAllocationsLocked()) revert AllocationsNotLocked();
         if (!teamBeneficiaries[beneficiary].isActive) revert NotBeneficiary();
 
         Beneficiary storage b = teamBeneficiaries[beneficiary];
@@ -507,8 +571,8 @@ contract EscrowMultiTreasury is Ownable {
      * @dev LP tokens have no vesting - can be claimed immediately after funding
      */
     function claimLP() external {
-        if (!treasuryFunded) revert TreasuryNotFunded();
-        if (!lpAllocationActive) revert InvalidAmount();
+        if (!treasuryFunded()) revert TreasuryNotFunded();
+        if (!lpAllocationActive()) revert InvalidAmount();
         if (lpClaimed >= lpAllocation) revert NoTokensAvailable();
 
         uint256 claimableAmount = lpAllocation - lpClaimed;
@@ -526,8 +590,8 @@ contract EscrowMultiTreasury is Ownable {
      * @dev Marketing tokens vest 25% every 6 months for 2 years (4 milestones total)
      */
     function claimMarketing() external {
-        if (!treasuryFunded) revert TreasuryNotFunded();
-        if (!marketingAllocationActive) revert InvalidAmount();
+        if (!treasuryFunded()) revert TreasuryNotFunded();
+        if (!marketingAllocationActive()) revert InvalidAmount();
 
         uint256 currentMilestone = _getMarketingCurrentMilestone();
         if (currentMilestone <= marketingLastClaimMilestone) revert NoTokensAvailable();
@@ -650,7 +714,7 @@ contract EscrowMultiTreasury is Ownable {
         view
         returns (uint256)
     {
-        if (!marketingAllocationActive) return 0;
+        if (!marketingAllocationActive()) return 0;
 
         uint256 currentMilestone = _getMarketingCurrentMilestone();
         if (currentMilestone <= marketingLastClaimMilestone) return 0;
@@ -668,36 +732,25 @@ contract EscrowMultiTreasury is Ownable {
     /**
      * @notice Get marketing current milestone
      */
-    function getMarketingCurrentMilestone()
-        external
-        view
-        returns (uint256)
-    {
+    function getMarketingCurrentMilestone() external view returns (uint256) {
         return _getMarketingCurrentMilestone();
     }
 
     /**
-     * @notice Get comprehensive treasury statistics
+     * @notice Get essential treasury statistics
      */
     function getTreasuryStats() external view returns (TreasuryStats memory) {
         uint256 balance = escrowToken.balanceOf(address(this));
-        uint256 totalUsed = teamTotalAllocated + lpAllocation + marketingAllocation;
+        uint256 totalAllocated = teamTotalAllocated + lpAllocation + marketingAllocation;
         uint256 totalClaimed = teamTotalClaimed + lpClaimed + marketingClaimed;
 
         return TreasuryStats({
-            teamTotalAlloc: teamTotalAllocated,
-            teamTotalClaim: teamTotalClaimed,
-            teamTotalRemaining: teamTotalAllocated - teamTotalClaimed,
-            lpTotalAlloc: lpAllocation,
-            lpTotalClaim: lpClaimed,
-            lpTotalRemaining: lpAllocation - lpClaimed,
-            marketingTotalAlloc: marketingAllocation,
-            marketingTotalClaim: marketingClaimed,
-            marketingTotalRemaining: marketingAllocation - marketingClaimed,
-            globalUnallocated: balance > totalUsed - totalClaimed ? balance - (totalUsed - totalClaimed) : 0,
-            globalBeneficiaryCount: teamBeneficiaryList.length,
-            globalLocked: teamAllocationsLocked,
-            globalFunded: treasuryFunded
+            totalAllocated: totalAllocated,
+            totalClaimed: totalClaimed,
+            contractBalance: balance,
+            teamBeneficiaryCount: teamBeneficiaryList.length,
+            allocationsLocked: teamAllocationsLocked(),
+            treasuryFunded: treasuryFunded()
         });
     }
 
@@ -711,25 +764,28 @@ contract EscrowMultiTreasury is Ownable {
     /**
      * @notice Get team vesting schedule info
      */
-    function getTeamVestingSchedule() external view returns (TeamVestingSchedule memory) {
-        return TeamVestingSchedule({
+    function getTeamVestingSchedule() external view returns (VestingSchedule memory) {
+        return VestingSchedule({
             startTime: treasuryStartTime,
             firstUnlock: teamFirstUnlockTime,
             currentMilestone: _getTeamCurrentMilestone(),
             totalMilestones: TEAM_VESTING_MILESTONES,
-            intervalDays: TEAM_VESTING_INTERVAL / 1 days
+            intervalDays: TEAM_VESTING_INTERVAL / 1 days,
+            isTeamSchedule: true
         });
     }
 
     /**
      * @notice Get marketing vesting schedule info
      */
-    function getMarketingVestingSchedule() external view returns (MarketingVestingSchedule memory) {
-        return MarketingVestingSchedule({
+    function getMarketingVestingSchedule() external view returns (VestingSchedule memory) {
+        return VestingSchedule({
             startTime: marketingStartTime,
+            firstUnlock: 0, // Marketing has no lock period
             currentMilestone: _getMarketingCurrentMilestone(),
             totalMilestones: MARKETING_VESTING_MILESTONES,
-            intervalDays: MARKETING_VESTING_INTERVAL / 1 days
+            intervalDays: MARKETING_VESTING_INTERVAL / 1 days,
+            isTeamSchedule: false
         });
     }
 

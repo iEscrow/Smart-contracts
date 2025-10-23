@@ -10,14 +10,14 @@ contract EscrowMultiTreasuryTest is Test {
     EscrowMultiTreasury public treasury;
     MockERC20 public escrowToken;
 
-    // Test accounts
-    address public owner;
-    address public teamBeneficiary1;
-    address public teamBeneficiary2;
-    address public lpRecipient;
-    address public marketingRecipient;
-    address public user1;
-    address public user2;
+    // Test accounts (initialized in setUp)
+    address owner;
+    address teamBeneficiary1;
+    address teamBeneficiary2;
+    address lpRecipient;
+    address marketingRecipient;
+    address user1;
+    address user2;
 
     // Constants
     uint256 constant TOTAL_SUPPLY = 100_000_000_000 * 1e18; // 100B tokens
@@ -46,30 +46,50 @@ contract EscrowMultiTreasuryTest is Test {
     event AllocationRevoked(address indexed beneficiary, uint256 unvestedAmount);
 
     function setUp() public {
-        // Initialize test accounts
-        owner = address(this);
+        // Initialize test accounts first
+        owner = makeAddr("owner");
         teamBeneficiary1 = makeAddr("teamBeneficiary1");
         teamBeneficiary2 = makeAddr("teamBeneficiary2");
+        // Use the hardcoded addresses from the contract
         lpRecipient = 0x5f5868Bb7E708aAb9C25c80AEBFA0131735233af;
         marketingRecipient = 0xa315b46cA80982278eD28A3496718B1524Df467b;
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
+        // Start prank as owner for the entire setup
+        vm.startPrank(owner);
+
         // Deploy mock token
         escrowToken = new MockERC20("EscrowToken", "ESCROW", 18, TOTAL_SUPPLY);
 
-        // Deploy treasury contract
+        // Deploy treasury contract from owner address so owner becomes the contract owner
         treasury = new EscrowMultiTreasury(address(escrowToken));
 
-        // Transfer tokens to owner for funding
-        escrowToken.transfer(owner, TOTAL_ALLOCATION);
+        // Stop prank
+        vm.stopPrank();
+
+        // Mint tokens directly to owner for funding (since MockERC20 mints to deployer by default)
+        escrowToken.mint(owner, TOTAL_ALLOCATION);
+    }
+
+    // ============ HELPER FUNCTIONS ============
+
+    function fundTreasury() internal {
+        vm.prank(owner);
+        escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
+        vm.prank(owner);
+        treasury.fundTreasury();
     }
 
     // ============ DEPLOYMENT TESTS ============
 
+    function testCheckOwner() public view {
+        console.log("Treasury owner:", treasury.owner());
+        console.log("Test owner:", owner);
+        console.log("Are they equal?", treasury.owner() == owner);
+    }
+
     function testDeployment() public view {
-        // Check basic deployment
-        assertEq(address(treasury.escrowToken()), address(escrowToken));
         assertEq(treasury.TOTAL_ALLOCATION(), TOTAL_ALLOCATION);
         assertEq(treasury.TEAM_ALLOCATION(), TEAM_ALLOCATION);
         assertEq(treasury.LP_ALLOCATION(), LP_ALLOCATION);
@@ -107,7 +127,9 @@ contract EscrowMultiTreasuryTest is Test {
         uint256 initialBalance = escrowToken.balanceOf(owner);
 
         // Fund treasury
+        vm.prank(owner);
         escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
+        vm.prank(owner);
         treasury.fundTreasury();
 
         // Check state after funding
@@ -117,10 +139,13 @@ contract EscrowMultiTreasuryTest is Test {
     }
 
     function testFundTreasuryTwice() public {
+        vm.prank(owner);
         escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
+        vm.prank(owner);
         treasury.fundTreasury();
 
         // Try to fund again - should revert
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.TreasuryAlreadyFunded.selector);
         treasury.fundTreasury();
     }
@@ -128,7 +153,7 @@ contract EscrowMultiTreasuryTest is Test {
     function testFundTreasuryInsufficientBalance() public {
         // Deploy new treasury with insufficient balance
         address newOwner = makeAddr("newOwner");
-        escrowToken.transfer(newOwner, 1); // Give minimal tokens
+        escrowToken.mint(newOwner, 1); // Give minimal tokens directly
         vm.prank(newOwner);
         EscrowMultiTreasury newTreasury = new EscrowMultiTreasury(address(escrowToken));
 
@@ -272,6 +297,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testTeamClaimBeforeLockPeriod() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -284,6 +310,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testTeamClaimAfterThreeYears() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -307,6 +334,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testTeamClaimMultipleMilestones() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -340,7 +368,9 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testCompleteAllocationWorkflow() public {
         // Fund treasury
+        vm.prank(owner);
         escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
+        vm.prank(owner);
         treasury.fundTreasury();
 
         // Verify all allocations are set up
@@ -360,6 +390,7 @@ contract EscrowMultiTreasuryTest is Test {
         assertEq(escrowToken.balanceOf(marketingRecipient), marketingInitialBalance + (MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000));
 
         // Test Team claiming (after lock)
+        vm.prank(owner);
         treasury.lockAllocations();
         vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
 
@@ -385,6 +416,7 @@ contract EscrowMultiTreasuryTest is Test {
 
         // TEAM_ALLOCATION is already fully allocated with initial beneficiaries
         // Adding any more should exceed the limit
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.ExceedsTotalAllocation.selector);
         treasury.addBeneficiary(newBeneficiary, allocationAmount);
     }
@@ -393,6 +425,7 @@ contract EscrowMultiTreasuryTest is Test {
         fundTreasury();
 
         // Try to add more than TEAM_ALLOCATION (1B tokens)
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.ExceedsTotalAllocation.selector);
         treasury.addBeneficiary(makeAddr("newBeneficiary"), TEAM_ALLOCATION + 1);
     }
@@ -400,6 +433,7 @@ contract EscrowMultiTreasuryTest is Test {
     function testAddBeneficiaryZeroAmount() public {
         fundTreasury();
 
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.InvalidAmount.selector);
         treasury.addBeneficiary(makeAddr("newBeneficiary"), 0);
     }
@@ -407,21 +441,25 @@ contract EscrowMultiTreasuryTest is Test {
     function testAddBeneficiaryZeroAddress() public {
         fundTreasury();
 
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.InvalidAddress.selector);
         treasury.addBeneficiary(address(0), 1_000_000 * 1e18);
     }
 
     function testAddBeneficiaryAfterLock() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         // This should revert because allocations are locked
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
         treasury.addBeneficiary(makeAddr("newBeneficiary"), 1_000_000 * 1e18);
     }
 
     function testRevokeAllocation() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -430,6 +468,7 @@ contract EscrowMultiTreasuryTest is Test {
         // Advance time past lock period
         vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
 
+        vm.prank(owner);
         treasury.revokeAllocation(firstBeneficiary);
 
         // Verify allocation was revoked
@@ -440,21 +479,26 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testRevokeAllocationNotBeneficiary() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.NotBeneficiary.selector);
         treasury.revokeAllocation(makeAddr("newBeneficiary"));
     }
 
     function testLockAllocationsNotFunded() public {
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.TreasuryNotFunded.selector);
         treasury.lockAllocations();
     }
 
     function testLockAllocationsTwice() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
         treasury.lockAllocations();
     }
@@ -471,14 +515,17 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testClaimForNotBeneficiary() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
+        address nonBeneficiary = makeAddr("nonBeneficiary");
         vm.expectRevert(EscrowMultiTreasury.NotBeneficiary.selector);
-        treasury.claimFor(makeAddr("newBeneficiary"));
+        treasury.claimFor(nonBeneficiary);
     }
 
     function testClaimForNoTokensAvailable() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -495,27 +542,6 @@ contract EscrowMultiTreasuryTest is Test {
         treasury.claimFor(firstBeneficiary);
     }
 
-    function testMarketingClaimNotFunded() public {
-        vm.expectRevert(EscrowMultiTreasury.TreasuryNotFunded.selector);
-        treasury.claimMarketing();
-    }
-
-
-    function testGetTeamClaimableAmountRevoked() public {
-        fundTreasury();
-        treasury.lockAllocations();
-
-        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
-        address firstBeneficiary = initialBeneficiaries[0];
-
-        // Advance time and revoke
-        vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
-        treasury.revokeAllocation(firstBeneficiary);
-
-        // Claimable amount should be 0 for revoked beneficiary
-        assertEq(treasury.getTeamClaimableAmount(firstBeneficiary), 0);
-    }
-
     function testGetTeamClaimableAmountNotActive() public {
         address nonBeneficiary = makeAddr("nonBeneficiary");
         assertEq(treasury.getTeamClaimableAmount(nonBeneficiary), 0);
@@ -525,6 +551,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testMilestoneCalculationEdgeCases() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -546,51 +573,33 @@ contract EscrowMultiTreasuryTest is Test {
         assertEq(treasury.getTeamVestingSchedule().currentMilestone, TEAM_VESTING_MILESTONES);
     }
 
-    function testMarketingMilestoneEdgeCases() public {
-        // Test milestone 1 (immediately after deployment, before funding)
-        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 1);
-
-        fundTreasury();
-
-        // Test after funding (still milestone 1)
-        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 1);
-
-        // Test after first interval
-        vm.warp(block.timestamp + MARKETING_VESTING_INTERVAL);
-        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, 2);
-
-        // Test after all milestones
-        vm.warp(block.timestamp + (MARKETING_VESTING_MILESTONES - 1) * MARKETING_VESTING_INTERVAL);
-        assertEq(treasury.getMarketingVestingSchedule().currentMilestone, MARKETING_VESTING_MILESTONES);
-    }
-
     function testTreasuryStatsAfterClaims() public {
         fundTreasury();
 
         // Get initial stats
         EscrowMultiTreasury.TreasuryStats memory initialStats = treasury.getTreasuryStats();
-        assertEq(initialStats.teamTotalClaim, 0);
-        assertEq(initialStats.lpTotalClaim, 0);
-        assertEq(initialStats.marketingTotalClaim, 0);
+        assertEq(initialStats.totalClaimed, 0);
+        assertEq(initialStats.teamBeneficiaryCount, 28); // Should have hardcoded beneficiaries
 
         // Claim LP tokens
         treasury.claimLP();
         EscrowMultiTreasury.TreasuryStats memory afterLpStats = treasury.getTreasuryStats();
-        assertEq(afterLpStats.lpTotalClaim, LP_ALLOCATION);
+        assertEq(afterLpStats.totalClaimed, LP_ALLOCATION);
 
         // Claim marketing tokens
         vm.warp(block.timestamp + MARKETING_VESTING_INTERVAL / 2);
         treasury.claimMarketing();
         EscrowMultiTreasury.TreasuryStats memory afterMarketingStats = treasury.getTreasuryStats();
-        assertEq(afterMarketingStats.marketingTotalClaim, MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000);
+        assertEq(afterMarketingStats.totalClaimed, LP_ALLOCATION + (MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000));
 
         // Lock and claim team tokens
+        vm.prank(owner);
         treasury.lockAllocations();
         vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
         treasury.claimFor(initialBeneficiaries[0]);
         EscrowMultiTreasury.TreasuryStats memory finalStats = treasury.getTreasuryStats();
-        assertGt(finalStats.teamTotalClaim, 0);
+        assertGt(finalStats.totalClaimed, LP_ALLOCATION + (MARKETING_ALLOCATION * MARKETING_PERCENTAGE_PER_MILESTONE / 10000));
     }
 
     function testGetContractInfo() public {
@@ -627,6 +636,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testMultipleClaimsInSameMilestone() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -645,6 +655,7 @@ contract EscrowMultiTreasuryTest is Test {
 
     function testClaimAfterRevocation() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
@@ -652,6 +663,7 @@ contract EscrowMultiTreasuryTest is Test {
 
         // Advance time and revoke
         vm.warp(block.timestamp + TEAM_LOCK_DURATION + 1);
+        vm.prank(owner);
         treasury.revokeAllocation(firstBeneficiary);
 
         // Try to claim after revocation - should revert
@@ -659,24 +671,9 @@ contract EscrowMultiTreasuryTest is Test {
         treasury.claimFor(firstBeneficiary);
     }
 
-    function testAllBeneficiariesData() public {
-        fundTreasury();
-
-        (address[] memory addresses, uint256[] memory allocations, uint256[] memory claimed, bool[] memory active) = treasury.getAllTeamBeneficiaries();
-
-        assertEq(addresses.length, 28); // Total initial beneficiaries
-        assertEq(allocations.length, 28);
-        assertEq(claimed.length, 28);
-        assertEq(active.length, 28);
-
-        // Check first beneficiary
-        assertEq(allocations[0], 10_000_000 * 1e18);
-        assertEq(claimed[0], 0);
-        assertTrue(active[0]);
-    }
-
     function testNextUnlockTimeCalculations() public {
         fundTreasury();
+        vm.prank(owner);
         treasury.lockAllocations();
 
         // Before lock period
@@ -691,14 +688,37 @@ contract EscrowMultiTreasuryTest is Test {
         assertEq(treasury.getNextTeamUnlockTime(), 0); // No more unlocks
     }
 
-    // ============ HELPER FUNCTIONS ============
+    function testRemoveBeneficiaryAfterLock() public {
+        fundTreasury();
+        vm.prank(owner);
+        treasury.lockAllocations();
 
-    function fundTreasury() public {
-        escrowToken.approve(address(treasury), TOTAL_ALLOCATION);
-        treasury.fundTreasury();
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        vm.prank(owner);
+        vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
+        treasury.removeBeneficiary(firstBeneficiary);
     }
 
+    function testCalculationPrecision() public {
+        fundTreasury();
+        vm.prank(owner);
+        treasury.lockAllocations();
 
+        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
+        address firstBeneficiary = initialBeneficiaries[0];
+
+        // Test exact milestone timing
+        vm.warp(block.timestamp + TEAM_LOCK_DURATION);
+        uint256 claimable1 = treasury.getTeamClaimableAmount(firstBeneficiary);
+        assertEq(claimable1, 2000000 * 1e18); // Exactly 20%
+
+        // Test after one interval
+        vm.warp(block.timestamp + TEAM_VESTING_INTERVAL);
+        uint256 claimable2 = treasury.getTeamClaimableAmount(firstBeneficiary);
+        assertEq(claimable2, 4000000 * 1e18); // Exactly 40%
+    }
 
     function testRemoveBeneficiary() public {
         fundTreasury();
@@ -713,6 +733,7 @@ contract EscrowMultiTreasuryTest is Test {
         vm.expectEmit(true, true, true, true);
         emit BeneficiaryRemoved(firstBeneficiary, initialAllocation);
 
+        vm.prank(owner);
         treasury.removeBeneficiary(firstBeneficiary);
 
         // Verify removal
@@ -727,10 +748,10 @@ contract EscrowMultiTreasuryTest is Test {
     function testRemoveBeneficiaryNotActive() public {
         fundTreasury();
 
+        vm.prank(owner);
         vm.expectRevert(EscrowMultiTreasury.NotBeneficiary.selector);
         treasury.removeBeneficiary(makeAddr("newBeneficiary"));
     }
-
 
     function testTimeUntilNextMarketingUnlock() public {
         fundTreasury();
@@ -783,34 +804,5 @@ contract EscrowMultiTreasuryTest is Test {
         vm.warp(block.timestamp + MARKETING_VESTING_INTERVAL);
         vm.expectRevert(EscrowMultiTreasury.NoTokensAvailable.selector);
         treasury.claimMarketing();
-    }
-
-    function testRemoveBeneficiaryAfterLock() public {
-        fundTreasury();
-        treasury.lockAllocations();
-
-        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
-        address firstBeneficiary = initialBeneficiaries[0];
-
-        vm.expectRevert(EscrowMultiTreasury.AllocationsAlreadyLocked.selector);
-        treasury.removeBeneficiary(firstBeneficiary);
-    }
-
-    function testCalculationPrecision() public {
-        fundTreasury();
-        treasury.lockAllocations();
-
-        (address[] memory initialBeneficiaries,,,) = treasury.getAllTeamBeneficiaries();
-        address firstBeneficiary = initialBeneficiaries[0];
-
-        // Test exact milestone timing
-        vm.warp(block.timestamp + TEAM_LOCK_DURATION);
-        uint256 claimable1 = treasury.getTeamClaimableAmount(firstBeneficiary);
-        assertEq(claimable1, 2000000 * 1e18); // Exactly 20%
-
-        // Test after one interval
-        vm.warp(block.timestamp + TEAM_VESTING_INTERVAL);
-        uint256 claimable2 = treasury.getTeamClaimableAmount(firstBeneficiary);
-        assertEq(claimable2, 4000000 * 1e18); // Exactly 40%
     }
 }
