@@ -14,9 +14,15 @@ contract SimpleKYC is EIP712 {
 
     event UserVerified(address indexed user, bool verified);
 
+    error InvalidSigner();
+    error Unauthorized();
+    error AlreadyVerified();
+    error InvalidAdmin();
+
     /// @notice Constructor
     /// @param _kycSigner Address authorized to sign KYC data
     constructor(address _kycSigner) EIP712("KYCVerification", "1") {
+        if (_kycSigner == address(0)) revert InvalidSigner();
         kycSigner = _kycSigner;
         admin = msg.sender; // deployer is admin
     }
@@ -24,8 +30,8 @@ contract SimpleKYC is EIP712 {
     /// @notice Admin function to directly mark KYC = true for testing
     /// @param user Address to verify
     function adminSetVerified(address user) external {
-        require(msg.sender == admin, "Only admin can set");
-        require(!isVerified[user], "Already verified");
+        if (msg.sender != admin) revert Unauthorized();
+        if (isVerified[user]) revert AlreadyVerified();
         isVerified[user] = true;
 
         emit UserVerified(user, true);
@@ -41,7 +47,7 @@ contract SimpleKYC is EIP712 {
     /// @notice Admin function to revoke KYC for testing
     /// @param user Address to revoke KYC for
     function adminRevokeVerified(address user) external {
-        require(msg.sender == admin, "Only admin can revoke");
+        if (msg.sender != admin) revert Unauthorized();
         isVerified[user] = false;
         emit UserVerified(user, false);
     }
@@ -49,8 +55,8 @@ contract SimpleKYC is EIP712 {
     /// @notice Update admin address
     /// @param newAdmin New admin address
     function updateAdmin(address newAdmin) external {
-        require(msg.sender == admin, "Only admin can update");
-        require(newAdmin != address(0), "Invalid admin address");
+        if (msg.sender != admin) revert Unauthorized();
+        if (newAdmin == address(0)) revert InvalidAdmin();
         admin = newAdmin;
     }
 }

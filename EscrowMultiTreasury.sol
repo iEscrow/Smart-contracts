@@ -232,11 +232,6 @@ contract EscrowMultiTreasury is Ownable {
     /// @param allocation Token allocation for the beneficiary
     event BeneficiaryAdded(address indexed beneficiary, uint256 allocation);
 
-    /// @notice Emitted when beneficiary allocation is updated
-    /// @param beneficiary Address of the beneficiary
-    /// @param newAllocation New token allocation amount
-    event BeneficiaryUpdated(address indexed beneficiary, uint256 newAllocation);
-
     /// @notice Emitted when beneficiary is removed
     /// @param beneficiary Address of the removed beneficiary
     /// @param allocation Allocation that was removed
@@ -412,31 +407,6 @@ contract EscrowMultiTreasury is Ownable {
         emit BeneficiaryAdded(beneficiary, allocation);
     }
 
-    /**
-     * @notice Update team beneficiary allocation (only before locking)
-     * @param beneficiary Beneficiary address
-     * @param newAllocation New allocation amount
-     */
-    function updateBeneficiary(address beneficiary, uint256 newAllocation)
-        external
-        onlyOwner
-    {
-        if (teamAllocationsLocked) revert AllocationsAlreadyLocked();
-        if (!teamBeneficiaries[beneficiary].isActive) revert NotBeneficiary();
-        if (newAllocation == 0) revert InvalidAmount();
-
-        Beneficiary storage b = teamBeneficiaries[beneficiary];
-        uint256 oldAllocation = b.totalAllocation;
-
-        // Update total allocated
-        teamTotalAllocated = teamTotalAllocated - oldAllocation + newAllocation;
-
-        if (teamTotalAllocated > TEAM_ALLOCATION) revert ExceedsTotalAllocation();
-
-        b.totalAllocation = newAllocation;
-
-        emit BeneficiaryUpdated(beneficiary, newAllocation);
-    }
 
     /**
      * @notice Remove team beneficiary (only before locking)
@@ -783,9 +753,10 @@ contract EscrowMultiTreasury is Ownable {
 
         if (currentMilestone >= MARKETING_VESTING_MILESTONES) return 0;
 
-        uint256 nextUnlock = marketingStartTime + (currentMilestone * MARKETING_VESTING_INTERVAL);
+        // Calculate when the next milestone becomes available
+        uint256 nextMilestoneTime = marketingStartTime + (currentMilestone * MARKETING_VESTING_INTERVAL);
 
-        return nextUnlock > block.timestamp ? nextUnlock - block.timestamp : 0;
+        return nextMilestoneTime;
     }
 
     /**

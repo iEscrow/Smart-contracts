@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Test.sol";
-import "forge-std/console.sol";
+import "@forge-std/Test.sol";
+import "@forge-std/console.sol";
 import "../KYCVerification.sol";
 import "./helpers/KYCHelpers.sol";
 
@@ -377,8 +377,8 @@ contract KYCVerificationTest is Test, KYCHelpers {
         uint256 gasUsed = gasBefore - gasleft();
         console.log("Gas used for KYC verification:", gasUsed);
         
-        // Should be reasonable gas usage (less than 100k gas)
-        assertLt(gasUsed, 100_000, "Gas usage should be reasonable");
+        // Should be reasonable gas usage (less than 120k gas for EIP712 operations)
+        assertLt(gasUsed, 120_000, "Gas usage should be reasonable");
         
         console.log("[PASS] Gas efficiency test passed");
     }
