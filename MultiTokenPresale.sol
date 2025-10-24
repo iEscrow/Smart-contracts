@@ -9,9 +9,16 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "./Authorizer.sol";
 
+/**
+ * @title MultiTokenPresale
+ * @notice Advanced presale contract with KYC voucher authorization system
+ * @dev Implements strict beneficiary validation through cryptographic vouchers:
+ * - UnityPresaleV2.sol: Enforces beneficiary == msg.sender (no delegated purchases)
+ * - MultiTokenPresale.sol: Allows delegated purchases ONLY through authorized vouchers
+ * - This ensures consistent validation across the presale system
+ */
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
-    
     // Token price structure
     struct TokenPrice {
         uint256 priceUSD;        // Price in USD (8 decimals)
@@ -286,8 +293,12 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ VOUCHER-BASED PURCHASE FUNCTIONS ============
     
-    /// @notice Purchase with native currency using voucher authorization
-    /// @param beneficiary Address that will receive the tokens
+    /// @notice Purchase with native currency using voucher authorization (KYC-AUTHORIZED DELEGATED PURCHASES)
+    /// @dev BENEFICIARY VALIDATION POLICY: Allows delegated purchases ONLY through authorized vouchers
+    /// - voucher.buyer must equal msg.sender (only voucher holder can use it)
+    /// - voucher.beneficiary must equal beneficiary parameter (specified in voucher)
+    /// - This enables KYC-verified delegated purchases while preventing unauthorized ones
+    /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
     function buyWithNativeVoucher(
@@ -327,10 +338,14 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
     }
     
-    /// @notice Purchase with ERC20 tokens using voucher authorization
+    /// @notice Purchase with ERC20 tokens using voucher authorization (KYC-AUTHORIZED DELEGATED PURCHASES)
+    /// @dev BENEFICIARY VALIDATION POLICY: Allows delegated purchases ONLY through authorized vouchers
+    /// - voucher.buyer must equal msg.sender (only voucher holder can use it)
+    /// - voucher.beneficiary must equal beneficiary parameter (specified in voucher)
+    /// - This enables KYC-verified delegated purchases while preventing unauthorized ones
     /// @param token Payment token address
     /// @param amount Payment token amount
-    /// @param beneficiary Address that will receive the tokens
+    /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
     function buyWithTokenVoucher(
