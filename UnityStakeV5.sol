@@ -616,6 +616,11 @@ interface IERC20 {
     ) external returns (bool);
 }
 
+interface IEscrowToken is IERC20 {
+    function mintRewards(address to, uint256 amount) external;
+    function burn(uint256 amount) external;
+}
+
 contract TokenStaking is Ownable, ReentrancyGuard {
     // Struct to store the User's Details
     struct User {
@@ -657,6 +662,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
 
     // Token contract address
     address private _tokenAddress;
+    IEscrowToken private immutable _token;
 
     // APY
     uint256 _apyRate;
@@ -672,15 +678,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     event EarlyUnStakeFee(address indexed user, uint256 amount);
     event ClaimReward(address indexed user, uint256 amount);
 
-    modifier whenTreasuryHasBalance(uint256 amount) {
-        require(
-            IERC20(_tokenAddress).balanceOf(address(this)) >= amount,
-            "TokenStaking: insufficient funds in the treasury"
-        );
-        _;
-    }
-
-// 2000000000000000000000 = 2000% APY 
+// 2000000000000000000000 = 2000% APY
 
 //   0xDd565537c63CfBb8899617644AAB1B7CA423ee40,2000,1,100000,25
    constructor(address tokenAddress,
@@ -692,6 +690,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
             require(tokenAddress != address(0), "TokenStaking: token address cannot be 0 address");
         
             _tokenAddress = tokenAddress;
+            _token = IEscrowToken(tokenAddress);
             //owner = msg.sender;
             _apyRate = apyRate;
             _minimumStakingAmount = minimumStakingAmount;
@@ -788,7 +787,12 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @notice This function is used to get withdrawable amount from contract
      */
     function getWithdrawableAmount() external view returns (uint256) {
-        return IERC20(_tokenAddress).balanceOf(address(this)) - _totalStakedTokens * 1e18;
+        uint256 balance = _token.balanceOf(address(this));
+        uint256 liabilities = _totalStakedTokens * 1e18;
+        if (balance <= liabilities) {
+            return 0;
+        }
+        return balance - liabilities;
     }
 
      /**
@@ -796,7 +800,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * used for staking rewards
      */
     function getTreasuryAmount() external view returns (uint256) {
-        return IERC20(_tokenAddress).balanceOf(address(this));
+        return _token.balanceOf(address(this));
     }
 
     /**
@@ -923,7 +927,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      */
     function withdraw(uint256 amount) external onlyOwner nonReentrant {
         require(this.getWithdrawableAmount() >= amount, "TokenStaking: not enough withdrawable tokens");
-        IERC20(_tokenAddress).transfer(msg.sender, amount);
+        require(_token.transfer(msg.sender, amount), "TokenStaking: failed to withdraw");
     }
 
     /* Owner Methods End */
@@ -979,14 +983,14 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         _totalStakedTokens += _amount;
 
         require(
-            IERC20(_tokenAddress).transferFrom(msg.sender, address(this), _amount * 1e18),
+            _token.transferFrom(msg.sender, address(this), _amount * 1e18),
             "TokenStaking: failed to transfer tokens"
         );
         emit Stake(user_, _amount);
 
 //*************************************************
 // BURN THE INITIAL TOKENS
-   require(IERC20(_tokenAddress).transfer(address(0),  _amount * 1e18), "TokenStaking: failed to burn");
+   _token.burn(_amount * 1e18);
 
     }
 
@@ -994,7 +998,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @notice This function is used to unstake tokens
      * @param _amount Amount of tokens to be unstaked
      */
-    function unstake(uint256 _amount) external nonReentrant whenTreasuryHasBalance(_amount) {
+    function unstake(uint256 _amount) external nonReentrant {
         address user = msg.sender;
 
         require(_amount != 0, "TokenStaking: amount should be non-zero");
@@ -1017,7 +1021,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
             _totalUsers -= 1;
         }
 
-        require(IERC20(_tokenAddress).transfer( msg.sender, amountToUnstake * 1e18), "TokenStaking: failed to transfer");
+        _token.mintRewards(address(this), amountToUnstake * 1e18);
+        require(_token.transfer(msg.sender, amountToUnstake * 1e18), "TokenStaking: failed to transfer");
         emit UnStake(user, _amount);
     }
 
@@ -1025,17 +1030,19 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @notice This function is used to claim user's rewards
      * Note: The called function should be payable if you send value 
      */
-    function claimReward() external nonReentrant whenTreasuryHasBalance(_users[msg.sender].rewardAmount) {
+    function claimReward() external nonReentrant {
         _calculateRewards(msg.sender);
         uint256 rewardAmount = _users[msg.sender].rewardAmount;
 
         require(rewardAmount > 0, "TokenStaking: no reward to claim");
 
+        _token.mintRewards(address(this), rewardAmount);
+
         uint256 feeEarlyUnstake = 0;
 
         // Calculate early unstake fee % based on stakedays
         /////////////////////////////////////////////////////////////////////////
-        
+
         if (getCurrentTime() <= _users[msg.sender].lastStakeTime +  _users[msg.sender].stakeDays * 1 days) {
             uint256 _lastStakeTime = _users[msg.sender].lastStakeTime;
             uint256 _stakeTimeSoFar = (getCurrentTime() -_users[msg.sender].lastStakeTime);
@@ -1068,11 +1075,11 @@ contract TokenStaking is Ownable, ReentrancyGuard {
             if ( feeEarlyUnstake>0 ) {
                 // burn 25% of fees
                 uint256 _burn25 = (feeEarlyUnstake * 25) / 100;
-                require(IERC20(_tokenAddress).transfer(address(0), _burn25), "TokenStaking: failed to burn");
+                _token.burn(_burn25);
                 emit EarlyUnStakeFee(msg.sender, _burn25);
-            } 
-           
-          
+            }
+
+
         } else {
             // Calculate rewards
             (uint256 amount, ) = _getUserEstimatedRewards(msg.sender);
@@ -1080,9 +1087,9 @@ contract TokenStaking is Ownable, ReentrancyGuard {
             
         }
 
-        rewardAmount = rewardAmount - feeEarlyUnstake; 
+        rewardAmount = rewardAmount - feeEarlyUnstake;
 
-        require(IERC20(_tokenAddress).transfer(msg.sender, rewardAmount), "TokenStaking: failed to transfer");
+        require(_token.transfer(msg.sender, rewardAmount), "TokenStaking: failed to transfer");
      
         /////////////////////////////////
         // UPDATE TOTAL PAID TOKENS   

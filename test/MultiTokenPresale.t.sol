@@ -67,6 +67,7 @@ contract MultiTokenPresaleTest is Test {
     address public owner = address(0x1);
     address public buyer1 = address(0x3);
     address public buyer2 = address(0x4);
+    address public staking;
     
     // Mock tokens for testing
     MockERC20 public mockUSDC;  // 6 decimals
@@ -84,6 +85,7 @@ contract MultiTokenPresaleTest is Test {
     uint256 constant VOUCHER_LIMIT = 10000 * 1e8; // $10000 limit
     
     function setUp() public {
+        staking = vm.addr(0x5);
         vm.startPrank(owner);
         
         // Deploy contracts
@@ -97,7 +99,7 @@ contract MultiTokenPresaleTest is Test {
         );
         
         // Set up presale
-        escrowToken.mint(address(presale), MAX_TOKENS);
+        escrowToken.mintPresaleAllocation(address(presale), staking);
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         

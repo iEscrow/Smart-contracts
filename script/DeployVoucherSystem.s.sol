@@ -10,6 +10,7 @@ contract DeployVoucherSystem is Script {
     // Deployment parameters
     address public constant OWNER = 0x1234567890123456789012345678901234567890; // Replace with actual owner
     address public constant BACKEND_SIGNER = 0x2345678901234567890123456789012345678901; // Replace with actual backend signer
+    address public constant STAKING_CONTRACT = 0x3456789012345678901234567890123456789012; // Replace with actual staking contract
     
     // Presale parameters
     uint256 public constant PRESALE_RATE = 666666666666666666; // 666.666... tokens per USD (18 decimals)
@@ -21,6 +22,7 @@ contract DeployVoucherSystem is Script {
         console.log("Starting voucher-based presale system deployment...");
         console.log("Owner:", OWNER);
         console.log("Backend Signer:", BACKEND_SIGNER);
+        console.log("Staking Contract:", STAKING_CONTRACT);
         
         // 1. Deploy EscrowToken
         console.log("\\n1. Deploying EscrowToken...");
@@ -50,7 +52,7 @@ contract DeployVoucherSystem is Script {
         
         // 5. Mint presale allocation to presale contract
         console.log("\\n5. Minting presale allocation...");
-        escrowToken.mint(address(presale), MAX_PRESALE_TOKENS);
+        escrowToken.mintPresaleAllocation(address(presale), STAKING_CONTRACT);
         console.log("Minted", MAX_PRESALE_TOKENS / 1e18, "ESCROW tokens to presale contract");
         
         // 6. Verify setup
@@ -107,7 +109,8 @@ contract DeployVoucherSystem is Script {
         presale.setVoucherSystemEnabled(true);
         
         // Mint tokens
-        escrowToken.mint(address(presale), MAX_PRESALE_TOKENS);
+        address testStaking = testOwner; // Replace if a dedicated staking contract is deployed on testnet
+        escrowToken.mintPresaleAllocation(address(presale), testStaking);
         
         // For testnet, start presale immediately
         presale.startPresale(34 days);
