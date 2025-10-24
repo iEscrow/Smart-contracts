@@ -134,7 +134,7 @@ contract MultiTokenPresaleTest is Test {
     
     // ========== PRESALE LIFECYCLE TESTS ==========
     
-    function testPresaleNotStartedInitially() public {
+    function testPresaleNotStartedInitially() public view {
         (bool started, bool ended,,,) = presale.getPresaleStatus();
         assertFalse(started);
         assertFalse(ended);
@@ -291,7 +291,7 @@ contract MultiTokenPresaleTest is Test {
         assertTrue(presale.getRemainingTokens() < MAX_TOKENS);
     }
     
-    function testInitialAllocationsMinted() public {
+    function testInitialAllocationsMinted() public view {
         uint256 marketingAllocation = escrowToken.MARKETING_ALLOCATION();
         uint256 liquidityAllocation = escrowToken.LIQUIDITY_ALLOCATION();
         
@@ -569,13 +569,107 @@ contract MultiTokenPresaleTest is Test {
         presale.buyWithTokenVoucher(address(0), 0.01 ether, buyer1, voucher, signature);
     }
     
+    // ========== GRO-05 PRESALE END TIME PROTECTION TESTS ==========
+
+    /// @notice Test that presaleEndTime is not overwritten after presale ends
+    /// @dev This test demonstrates the GRO-05 fix prevents repeated overwrites of presaleEndTime
+    function testPresaleEndTimeNotOverwrittenAfterEnd() public {
+        _startPresale();
+        uint256 startTime = presale.presaleStartTime();
+
+        // Verify presale is active initially
+        assertTrue(presale.isPresaleActive());
+        assertFalse(presale.presaleEnded());
+
+        // End presale manually by owner (must be after presaleEndTime)
+        vm.warp(startTime + 35 days); // Warp past the 34-day presale duration
+        vm.prank(owner);
+        presale.endPresale();
+
+        // Verify presale ended and end time was set
+        assertTrue(presale.presaleEnded());
+        uint256 originalEndTime = presale.presaleEndTime();
+        assertFalse(presale.isPresaleActive());
+
+        // Warp to different times and try purchases that would trigger _checkAutoEndConditions
+        vm.warp(startTime + 2 days);
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
+        bytes memory signature = _signVoucher(voucher);
+
+        // This should fail because presale ended
+        vm.expectRevert("Presale ended");
+        vm.prank(buyer1);
+        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
+
+        // **CRITICAL ASSERTION**: Verify presaleEndTime hasn't changed
+        assertEq(presale.presaleEndTime(), originalEndTime,
+            "GRO-05 FIX FAILED: presaleEndTime was overwritten after presale ended");
+
+        // Warp further and try again
+        vm.warp(startTime + 30 days);
+        vm.expectRevert("Presale ended");
+        vm.prank(buyer1);
+        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
+
+        // **CRITICAL ASSERTION**: Verify presaleEndTime still hasn't changed
+        assertEq(presale.presaleEndTime(), originalEndTime,
+            "GRO-05 FIX FAILED: presaleEndTime was overwritten after presale ended");
+
+        // Verify presale is still ended
+        assertTrue(presale.presaleEnded());
+        assertFalse(presale.isPresaleActive());
+    }
+
+    /// @notice Test that demonstrates the vulnerability before the fix
+    /// @dev This test shows what would happen without the GRO-05 fix
+    function testPresaleEndTimeOverwriteVulnerability() public {
+        _startPresale();
+
+        // End presale by reaching max duration
+        uint256 startTime = presale.presaleStartTime();
+        vm.warp(startTime + 34 days + 1);
+
+        // First end condition met - presale should end
+        vm.prank(owner);
+        presale.endPresale();
+
+        // Record the original end time
+        uint256 originalEndTime = presale.presaleEndTime();
+
+        // Warp to a different time (simulating different block timestamp)
+        vm.warp(startTime + 35 days + 1000);
+
+        // Make a purchase that would trigger _checkAutoEndConditions
+        // Before fix: this would overwrite presaleEndTime
+        // After fix: this should be prevented
+
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
+        bytes memory signature = _signVoucher(voucher);
+
+        // This should fail because presale ended
+        vm.expectRevert("Presale ended");
+        vm.prank(buyer1);
+        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
+
+        // **CRITICAL**: Verify end time is preserved
+        assertEq(presale.presaleEndTime(), originalEndTime,
+            "GRO-05 FIX VERIFICATION: End time should be preserved");
+
+        // Verify the presale status is still correctly ended
+        (, bool ended,,,) = presale.getPresaleStatus();
+        assertTrue(ended);
+        assertFalse(presale.isPresaleActive());
+    }
+
+
     // ========== HELPER FUNCTIONS ==========
-    
+
     function _startPresale() internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1);
         presale.autoStartIEscrowPresale();
     }
-    
+
+
     function _createVoucher(
         address buyer,
         address beneficiary,

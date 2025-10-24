@@ -467,6 +467,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Check if presale should auto-end
     function _checkAutoEndConditions() internal {
+        // Prevent overwrites if already ended
+        if (presaleEnded) return;
+
         // End if all tokens sold
         if (totalTokensMinted >= maxTokensToMint) {
             presaleEnded = true;
