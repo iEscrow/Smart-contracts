@@ -28,8 +28,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Presale token details
     IERC20 public presaleToken;
-    uint256 public presaleRate;  // Tokens per USD (18 decimals)
-    uint256 public maxTokensToMint;
+    uint256 public immutable presaleRate;  // Tokens per USD (18 decimals)
+    uint256 public immutable maxTokensToMint;
     uint256 public totalTokensMinted;
     
     // Authorizer integration for voucher-based purchases
