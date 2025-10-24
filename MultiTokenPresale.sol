@@ -6,13 +6,11 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 import "./Authorizer.sol";
 
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
-    
-    // Gas buffer for native currency purchases
-    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
     
     // Token price structure
     struct TokenPrice {
@@ -30,6 +28,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // Authorizer integration for voucher-based purchases
     Authorizer public authorizer;
     bool public voucherSystemEnabled = false; // Disabled by default for compatibility
+    
+    // Gas buffer for native currency purchases
+    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -525,7 +526,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function withdrawNative() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No native currency to withdraw");
-        payable(owner()).transfer(balance);
+        Address.sendValue(payable(owner()), balance);
     }
     
     function withdrawToken(address token) external onlyOwner {
