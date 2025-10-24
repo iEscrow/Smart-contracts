@@ -378,7 +378,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
 
-        // Track USD spent for analytics (no limit enforced)
+        // GRO-04: Enforce per-user purchase limit
+        require(totalUsdPurchased[beneficiary] + usdValue * 1e8 <= maxTotalPurchasePerUser, "Exceeds per-user cap");
+        
+        // Track USD spent for analytics
         totalUsdPurchased[beneficiary] += usdValue * 1e8;
         
         // Calculate presale tokens (limit enforced at total token level in _processPurchase)
@@ -389,6 +392,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
+        
+        // GRO-04: Enforce per-user purchase limit
+        require(totalUsdPurchased[beneficiary] + usdAmount <= maxTotalPurchasePerUser, "Exceeds per-user cap");
         
         // Track USD spent for analytics (usdAmount already has 8 decimals)
         totalUsdPurchased[beneficiary] += usdAmount;
@@ -558,7 +564,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
         
-        // No per-user limit - only total token supply limit enforced
+        // View function for external queries - no limits enforced here
+        // Per-user and total token supply limits enforced in actual purchase functions
         // Calculate presale tokens
         return (usdValue * presaleRate);
     }
