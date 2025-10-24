@@ -362,8 +362,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
         require(authorized, "Voucher authorization failed");
         
-        // Transfer tokens (SafeERC20 handles USDT compatibility)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        // Transfer tokens with deflationary token compatibility check
+        uint256 beforeBalance = IERC20(token).balanceOf(address(this));
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        uint256 received = IERC20(token).balanceOf(address(this)) - beforeBalance;
+        require(received == amount, "Deflationary token not supported");
         
         uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
         _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);

@@ -6,6 +6,7 @@ import "../Authorizer.sol";
 import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Mock ERC20 token for testing
 contract MockERC20 is ERC20 {
@@ -24,36 +25,108 @@ contract MockERC20 is ERC20 {
     }
 }
 
-/// @notice Mock USDT that doesn't return bool on transfer (for testing SafeERC20)
-contract MockUSDT {
+/// @notice Mock deflationary token that burns 1% of tokens on transfer
+contract MockDeflationaryToken is IERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
-    
-    uint8 public constant decimals = 6;
-    string public constant name = "Tether USD";
-    string public constant symbol = "USDT";
-    
+
+    string public constant name = "Deflationary Token";
+    string public constant symbol = "DEFL";
+
+    function decimals() external pure returns (uint8) {
+        return 6;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return 1000000 * 1e6; // 1M tokens
+    }
+
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
     }
-    
-    function approve(address spender, uint256 amount) external {
+
+    function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
     }
-    
-    // USDT doesn't return bool on transfer
-    function transfer(address to, uint256 amount) external {
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+
+        uint256 burnAmount = amount / 100; // Burn 1%
+        uint256 transferAmount = amount - burnAmount;
+
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += transferAmount;
+
+        emit Transfer(msg.sender, address(0), burnAmount); // Burn event
+        emit Transfer(msg.sender, to, transferAmount);    // Transfer event
+
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+
+        uint256 burnAmount = amount / 100; // Burn 1%
+        uint256 transferAmount = amount - burnAmount;
+
+        balanceOf[from] -= amount;
+        balanceOf[to] += transferAmount;
+        allowance[from][msg.sender] -= amount;
+
+        emit Transfer(from, address(0), burnAmount); // Burn event
+        emit Transfer(from, to, transferAmount);    // Transfer event
+
+        return true;
+    }
+}
+
+/// @notice Mock USDT that doesn't return bool on transfer (for testing SafeERC20)
+contract MockUSDT is IERC20 {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    string public constant name = "Tether USD";
+    string public constant symbol = "USDT";
+
+    function decimals() external pure returns (uint8) {
+        return 6;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return 1000000 * 1e6; // 1M tokens
+    }
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    // USDT returns bool on transfer (modern ERC20 standard)
+    function transfer(address to, uint256 amount) external returns (bool) {
         require(balanceOf[msg.sender] >= amount, "Insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
     }
-    
-    function transferFrom(address from, address to, uint256 amount) external {
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         allowance[from][msg.sender] -= amount;
+        emit Transfer(from, to, amount);
+        return true;
     }
 }
 
@@ -74,6 +147,7 @@ contract MultiTokenPresaleTest is Test {
     MockERC20 public mockWBTC;  // 8 decimals
     MockERC20 public mockWETH;  // 18 decimals
     MockUSDT public mockUSDT;   // 6 decimals, no return value
+    MockDeflationaryToken public mockDeflationaryToken; // 6 decimals, deflationary
     
     uint256 public signerPrivateKey = 0xB0B;
     address public signer = vm.addr(signerPrivateKey);
@@ -108,12 +182,14 @@ contract MultiTokenPresaleTest is Test {
         mockWBTC = new MockERC20("Wrapped Bitcoin", "WBTC", 8);
         mockWETH = new MockERC20("Wrapped Ether", "WETH", 18);
         mockUSDT = new MockUSDT();
+        mockDeflationaryToken = new MockDeflationaryToken();
         
         // Set token prices in presale
         presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, true);      // $1
         presale.setTokenPrice(address(mockWBTC), 45000 * 1e8, 8, true);  // $45,000
         presale.setTokenPrice(address(mockWETH), 4200 * 1e8, 18, true);  // $4,200
         presale.setTokenPrice(address(mockUSDT), 1 * 1e8, 6, true);      // $1
+        presale.setTokenPrice(address(mockDeflationaryToken), 1 * 1e8, 6, true); // $1
         
         vm.stopPrank();
         
@@ -130,6 +206,8 @@ contract MultiTokenPresaleTest is Test {
         mockWETH.mint(buyer2, 100 * 1e18);
         mockUSDT.mint(buyer1, 100000 * 1e6);  // 100k USDT
         mockUSDT.mint(buyer2, 100000 * 1e6);
+        mockDeflationaryToken.mint(buyer1, 100000 * 1e6); // 100k deflationary tokens
+        mockDeflationaryToken.mint(buyer2, 100000 * 1e6);
     }
     
     // ========== PRESALE LIFECYCLE TESTS ==========
@@ -769,7 +847,26 @@ contract MultiTokenPresaleTest is Test {
     }
 
 
-    // ========== HELPER FUNCTIONS ==========
+    // ========== GRO-09 DEFLATIONARY TOKEN TESTS ==========
+
+    function testDeflationaryTokenRejectedInPresale() public {
+        _startPresale();
+
+        uint256 purchaseAmount = 10000 * 1e6; // $10,000 worth of deflationary tokens
+
+        // Approve and try to purchase with deflationary token
+        vm.startPrank(buyer1);
+        mockDeflationaryToken.approve(address(presale), purchaseAmount);
+
+        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(mockDeflationaryToken), 0);
+        bytes memory signature = _signVoucher(voucher);
+
+        // Should revert because deflationary token doesn't deliver expected amount
+        vm.expectRevert("Deflationary token not supported");
+        presale.buyWithTokenVoucher(address(mockDeflationaryToken), purchaseAmount, buyer1, voucher, signature);
+        vm.stopPrank();
+    }
+
 
     function _startPresale() internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1);
@@ -824,9 +921,10 @@ contract MultiTokenPresaleTest is Test {
     function _makeTokenPurchase(address buyer, address token, uint256 amount, uint256 nonce) internal {
         Authorizer.Voucher memory voucher = _createVoucher(buyer, buyer, token, nonce);
         bytes memory signature = _signVoucher(voucher);
-        
+
         vm.startPrank(buyer);
-        MockERC20(token).approve(address(presale), amount);
+        // Use IERC20 interface for approval since both MockERC20 and MockUSDT implement it
+        IERC20(token).approve(address(presale), amount);
         presale.buyWithTokenVoucher(token, amount, buyer, voucher, signature);
         vm.stopPrank();
     }
