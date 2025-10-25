@@ -503,16 +503,15 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             emit PresaleEnded(block.timestamp);
             return;
         }
-        
-        // End if 34 days passed
-        if (block.timestamp >= presaleStartTime + MAX_PRESALE_DURATION) {
+
+        // End if presale end time reached
+        if (block.timestamp >= presaleEndTime) {
             presaleEnded = true;
-            presaleEndTime = block.timestamp;
-            emit PresaleEndedEarly("Maximum duration reached", block.timestamp);
+            emit PresaleEndedEarly("Presale duration reached", block.timestamp);
             emit PresaleEnded(block.timestamp);
             return;
         }
-        
+
         // Auto-advance from Round 1 to Round 2 if Round 1 time is up
         if (currentRound == 1 && block.timestamp >= round1EndTime) {
             currentRound = 2;
