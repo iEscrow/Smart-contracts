@@ -23,13 +23,22 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Presale token details
     IERC20 public presaleToken;
-    uint256 public presaleRate;  // Tokens per USD (18 decimals)
-    uint256 public maxTokensToMint;
+    uint256 public immutable presaleRate;  // Tokens per USD (18 decimals)
+    uint256 public immutable maxTokensToMint;
     uint256 public totalTokensMinted;
     
     // Authorizer integration for voucher-based purchases
     Authorizer public authorizer;
     bool public voucherSystemEnabled = false; // Disabled by default for compatibility
+    
+    // Treasury / beneficiary wallet
+    address public treasury;
+    address public pendingTreasury;
+    
+    // Governance executor (supports timelock or multisig)
+    address public governanceExecutor;
+    address public pendingGovernanceExecutor;
+    bool public governanceExecutorActive;
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -100,6 +109,12 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount,
         bytes32 voucherHash
     );
+    event TreasuryUpdateRequested(address indexed newTreasury);
+    event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
+    event GovernanceExecutorActivated(address indexed executor);
+    event GovernanceExecutorUpdateRequested(address indexed newExecutor);
+    event GovernanceExecutorUpdated(address indexed previousExecutor, address indexed newExecutor);
+    event GovernanceExecutorDeactivated(address indexed previousExecutor);
     
     constructor(
         address _presaleToken,
@@ -116,9 +131,87 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // Initialize default token prices and limits
         _initializeDefaultTokens();
+        
+        treasury = msg.sender;
     }
     
     // ============ MODIFIERS ============
+    
+    modifier onlyGovernance() {
+        if (governanceExecutorActive) {
+            require(msg.sender == governanceExecutor, "Governance: executor only");
+        } else {
+            require(msg.sender == owner(), "Governance: owner only");
+        }
+        _;
+    }
+
+    // ============ GOVERNANCE CONFIGURATION ============
+
+    /// @notice Activates governance executor routing (e.g., timelock or multisig)
+    /// @dev Can only be called while governance executor is inactive
+    function activateGovernanceExecutor(address executor) external onlyGovernance {
+        require(!governanceExecutorActive, "Governance already active");
+        require(executor != address(0), "Invalid executor");
+        require(executor.code.length > 0, "Executor must be contract");
+
+        governanceExecutor = executor;
+        governanceExecutorActive = true;
+
+        emit GovernanceExecutorActivated(executor);
+    }
+
+    /// @notice Propose a new governance executor. Requires confirmation by the proposed executor.
+    function proposeGovernanceExecutor(address newExecutor) external onlyGovernance {
+        require(newExecutor != address(0), "Invalid executor");
+        require(newExecutor.code.length > 0, "Executor must be contract");
+
+        pendingGovernanceExecutor = newExecutor;
+        emit GovernanceExecutorUpdateRequested(newExecutor);
+    }
+
+    /// @notice Accept the governance executor role.
+    function acceptGovernanceExecutor() external {
+        require(msg.sender == pendingGovernanceExecutor, "Caller not pending executor");
+
+        address previousExecutor = governanceExecutor;
+        governanceExecutor = pendingGovernanceExecutor;
+        pendingGovernanceExecutor = address(0);
+        governanceExecutorActive = true;
+
+        emit GovernanceExecutorUpdated(previousExecutor, governanceExecutor);
+    }
+
+    /// @notice Deactivate governance executor routing, falling back to the contract owner.
+    function deactivateGovernanceExecutor() external onlyGovernance {
+        require(governanceExecutorActive, "Governance inactive");
+
+        address previousExecutor = governanceExecutor;
+        governanceExecutor = address(0);
+        pendingGovernanceExecutor = address(0);
+        governanceExecutorActive = false;
+
+        emit GovernanceExecutorDeactivated(previousExecutor);
+    }
+
+    /// @notice Propose a new treasury address that will custody withdrawn funds.
+    function proposeTreasury(address newTreasury) external onlyGovernance {
+        require(newTreasury != address(0), "Invalid treasury");
+
+        pendingTreasury = newTreasury;
+        emit TreasuryUpdateRequested(newTreasury);
+    }
+
+    /// @notice Accept the treasury role.
+    function acceptTreasury() external {
+        require(msg.sender == pendingTreasury, "Caller not pending treasury");
+
+        address previousTreasury = treasury;
+        treasury = pendingTreasury;
+        pendingTreasury = address(0);
+
+        emit TreasuryUpdated(previousTreasury, treasury);
+    }
     
     // Initialize default token settings for UnityFinance presale
     function _initializeDefaultTokens() internal {
@@ -182,7 +275,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 priceUSD,
         uint8 decimals,
         bool isActive
-    ) external onlyOwner {
+    ) external onlyGovernance {
         require(priceUSD > 0, "Invalid price");
         require(decimals <= 18, "Invalid decimals");
         
@@ -197,7 +290,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     // Presale timing controls
-    function startPresale(uint256 _duration) external onlyOwner {
+    function startPresale(uint256 _duration) external onlyGovernance {
         require(presaleStartTime == 0, "Presale already started");
         require(_duration == MAX_PRESALE_DURATION, "Duration must match schedule");
         require(
@@ -235,7 +328,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit RoundAdvanced(0, 1, block.timestamp);
     }
     
-    function endPresale() external onlyOwner {
+    function endPresale() external onlyGovernance {
         require(presaleStartTime > 0, "Presale not started");
         require(!presaleEnded, "Presale already ended");
         if(block.timestamp < presaleEndTime) revert("Presale not ended yet");
@@ -244,7 +337,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit PresaleEnded(presaleEndTime);
     }
     
-    function extendPresale(uint256 _additionalDuration) external onlyOwner {
+    function extendPresale(uint256 _additionalDuration) external onlyGovernance {
         require(presaleStartTime > 0, "Presale not started");
         require(!presaleEnded, "Presale already ended");
         require(_additionalDuration <= 7 days, "Cannot extend more than 7 days");
@@ -257,7 +350,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     // Emergency end presale immediately
-    function emergencyEndPresale() external onlyOwner {
+    function emergencyEndPresale() external onlyGovernance {
         require(presaleStartTime > 0, "Presale not started");
         require(!presaleEnded, "Presale already ended");
         
@@ -269,7 +362,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     // Manually advance from Round 1 to Round 2
-    function moveToRound2() external onlyOwner {
+    function moveToRound2() external onlyGovernance {
         require(currentRound == 1, "Not in round 1");
         require(!presaleEnded, "Presale already ended");
         
@@ -309,11 +402,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
         require(nativePrice.isActive, "Native currency not accepted");
         
-        // Estimate gas cost and deduct from payment
-        uint256 gasCost = _estimateGasCost();
-        require(msg.value > gasCost, "Insufficient payment after gas");
-        
-        uint256 paymentAmount = msg.value - gasCost;
+        // Apply configured gas buffer (if any) to keep allocation independent from tx.gasprice
+        uint256 paymentAmount = _applyGasBuffer(msg.value);
         
         // Calculate USD amount for authorization
         uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
@@ -371,6 +461,13 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ INTERNAL FUNCTIONS ============
     
+    function _ensurePresaleActive() internal view {
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+    }
+    
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
@@ -402,7 +499,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address paymentToken,
         uint256 paymentAmount,
         uint256 tokenAmount
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
@@ -431,7 +530,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 paymentAmount,
         uint256 tokenAmount,
         Authorizer.Voucher calldata voucher
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
@@ -510,25 +611,25 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ ADMIN FUNCTIONS ============
     
-    function withdrawNative() external onlyOwner {
+    function withdrawNative() external onlyGovernance {
         uint256 balance = address(this).balance;
         require(balance > 0, "No native currency to withdraw");
-        payable(owner()).transfer(balance);
+        payable(treasury).transfer(balance);
     }
     
-    function withdrawToken(address token) external onlyOwner {
+    function withdrawToken(address token) external onlyGovernance {
         require(token != address(presaleToken), "Cannot withdraw presale tokens directly");
 
         uint256 balance = IERC20(token).balanceOf(address(this));
         require(balance > 0, "No tokens to withdraw");
-        IERC20(token).safeTransfer(owner(), balance);
+        IERC20(token).safeTransfer(treasury, balance);
     }
     
-    function pause() external onlyOwner {
+    function pause() external onlyGovernance {
         _pause();
     }
     
-    function unpause() external onlyOwner {
+    function unpause() external onlyGovernance {
         _unpause();
     }
     
@@ -781,38 +882,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         }
     }
     
-    // Gas estimation function
-    function _estimateGasCost() internal view returns (uint256) {
-        // Get current gas price
-        uint256 gasPrice = tx.gasprice;
-        
-        // Estimate gas usage based on operation complexity
-        uint256 estimatedGasUsed = _getEstimatedGasUsage();
-        
-        // Add 20% buffer for safety
-        uint256 gasWithBuffer = (estimatedGasUsed * 120) / 100;
-        
-        return gasPrice * gasWithBuffer;
+    // Apply an owner-configurable buffer so allocations don't depend on tx.gasprice
+    function _applyGasBuffer(uint256 amount) internal view returns (uint256) {
+        uint256 buffer = gasBuffer;
+        if (buffer == 0) {
+            return amount;
+        }
+        require(amount > buffer, "Insufficient payment after gas buffer");
+        return amount - buffer;
     }
     
-    // Estimate gas usage based on operation
-    function _getEstimatedGasUsage() internal pure returns (uint256) {
-        // Base gas for contract call
-        uint256 baseGas = 21000;
-        
-        // Gas for storage operations
-        uint256 storageGas = 20000; // For updating mappings
-        
-        // Gas for calculations
-        uint256 calculationGas = 10000; // For price calculations
-        
-        // Gas for events
-        uint256 eventGas = 5000; // For emitting events
-        
-        return baseGas + storageGas + calculationGas + eventGas;
-    }
-    
-    function setGasBuffer(uint256 _gasBuffer) external onlyOwner {
+    function setGasBuffer(uint256 _gasBuffer) external onlyGovernance {
         uint256 oldBuffer = gasBuffer;
         gasBuffer = _gasBuffer;
         emit GasBufferUpdated(oldBuffer, _gasBuffer);
@@ -823,7 +903,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     /// @notice Update the Authorizer contract address
     /// @param _authorizer New Authorizer contract address
-    function updateAuthorizer(address _authorizer) external onlyOwner {
+    function updateAuthorizer(address _authorizer) external onlyGovernance {
+        require(_authorizer != address(0), "Invalid authorizer");
+        require(_authorizer.code.length > 0, "Authorizer must be contract");
         address oldAuthorizer = address(authorizer);
         authorizer = Authorizer(_authorizer);
         emit AuthorizerUpdated(oldAuthorizer, _authorizer);
@@ -831,7 +913,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     /// @notice Toggle voucher system on/off
     /// @param _enabled Whether voucher system is enabled
-    function setVoucherSystemEnabled(bool _enabled) external onlyOwner {
+    function setVoucherSystemEnabled(bool _enabled) external onlyGovernance {
         voucherSystemEnabled = _enabled;
         emit VoucherSystemToggled(_enabled);
     }

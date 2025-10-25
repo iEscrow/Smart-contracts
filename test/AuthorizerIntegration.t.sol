@@ -421,9 +421,9 @@ contract AuthorizerIntegrationTest is Test {
     }
     
     function _calculateExpectedTokens(uint256 ethAmount) internal view returns (uint256) {
-        // Subtract estimated gas cost
-        uint256 gasCost = 21000 * tx.gasprice * 120 / 100; // 20% buffer
-        uint256 paymentAmount = ethAmount - gasCost;
+        // Mirror contract logic: subtract the fixed gas buffer (if configured)
+        uint256 buffer = presale.gasBuffer();
+        uint256 paymentAmount = buffer >= ethAmount ? 0 : ethAmount - buffer;
         
         // Convert to USD (ETH price is $4200 with 8 decimals, ETH has 18 decimals)
         uint256 usdAmount = (paymentAmount * ETH_PRICE) / 1e18; // USD with 8 decimals
