@@ -7,6 +7,23 @@ import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+contract MockExecutor {
+    receive() external payable {}
+
+    function accept(MultiTokenPresale presale) external {
+        presale.acceptGovernanceExecutor();
+    }
+
+    function acceptTreasury(MultiTokenPresale presale) external {
+        presale.acceptTreasury();
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool success,) = target.call(data);
+        require(success, "Executor call failed");
+    }
+}
+
 /// @notice Mock ERC20 token for testing
 contract MockERC20 is ERC20 {
     uint8 private _decimals;
@@ -200,6 +217,107 @@ contract MultiTokenPresaleTest is Test {
         presale.moveToRound2();
         
         assertEq(presale.currentRound(), 2);
+    }
+
+    function testGovernanceExecutorFlow() public {
+        MockExecutor initialExecutor = new MockExecutor();
+        MockExecutor newExecutor = new MockExecutor();
+
+        // Activate governance executor while owner controls contract
+        vm.prank(owner);
+        presale.activateGovernanceExecutor(address(initialExecutor));
+
+        // Owner no longer has privileged access
+        vm.prank(owner);
+        vm.expectRevert("Governance: executor only");
+        presale.setTokenPrice(address(mockUSDC), 2 * 1e8, 6, true);
+
+        // Executor can update prices through delegated call
+        initialExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(
+                presale.setTokenPrice.selector,
+                address(mockUSDC),
+                uint256(2 * 1e8),
+                uint8(6),
+                true
+            )
+        );
+        (uint256 updatedPrice,,) = presale.tokenPrices(address(mockUSDC));
+        assertEq(updatedPrice, 2 * 1e8);
+
+        // Executor proposes a replacement governance executor
+        initialExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(
+                presale.proposeGovernanceExecutor.selector,
+                address(newExecutor)
+            )
+        );
+
+        // Only the pending executor can accept
+        vm.prank(owner);
+        vm.expectRevert("Caller not pending executor");
+        presale.acceptGovernanceExecutor();
+
+        newExecutor.accept(presale);
+
+        // Previous executor no longer has permissions
+        vm.expectRevert("Executor call failed");
+        initialExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(
+                presale.setTokenPrice.selector,
+                address(mockUSDC),
+                uint256(3 * 1e8),
+                uint8(6),
+                true
+            )
+        );
+
+        // New executor controls privileged calls
+        newExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(
+                presale.setTokenPrice.selector,
+                address(mockUSDC),
+                uint256(3 * 1e8),
+                uint8(6),
+                true
+            )
+        );
+        (uint256 latestPrice,,) = presale.tokenPrices(address(mockUSDC));
+        assertEq(latestPrice, 3 * 1e8);
+
+        // Owner cannot change treasury anymore
+        vm.prank(owner);
+        vm.expectRevert("Governance: executor only");
+        presale.proposeTreasury(address(newExecutor));
+
+        // Executor proposes itself as treasury
+        newExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(
+                presale.proposeTreasury.selector,
+                address(newExecutor)
+            )
+        );
+        newExecutor.acceptTreasury(presale);
+        assertEq(presale.treasury(), address(newExecutor));
+
+        // Fund the presale and test withdrawals
+        vm.deal(address(presale), 1 ether);
+
+        vm.prank(owner);
+        vm.expectRevert("Governance: executor only");
+        presale.withdrawNative();
+
+        uint256 executorBalanceBefore = address(newExecutor).balance;
+        newExecutor.execute(
+            address(presale),
+            abi.encodeWithSelector(presale.withdrawNative.selector)
+        );
+        assertEq(address(newExecutor).balance, executorBalanceBefore + 1 ether);
     }
     
     function testPresaleAutoEndsAfter34Days() public {
