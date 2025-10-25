@@ -411,8 +411,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Apply configured gas buffer (if any) to keep allocation independent from tx.gasprice
         uint256 paymentAmount = _applyGasBuffer(msg.value);
         
-        // Calculate USD amount for authorization
-        uint256 usdAmount = _convertToUsd(NATIVE_ADDRESS, paymentAmount);
+        // Calculate USD amount for authorization (8 decimals)
+        uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
+        require(usdAmount > 0, "Payment amount too small");
         
         // Authorize purchase with voucher
         bool authorized = authorizer.authorize(voucher, signature, NATIVE_ADDRESS, usdAmount);
@@ -432,53 +433,45 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
-    // ✅ AFTER (Fixed):
-function buyWithTokenVoucher(
-    address token,
-    uint256 amount,
-    address beneficiary,
-    Authorizer.Voucher calldata voucher,
-    bytes calldata signature
-) external nonReentrant whenNotPaused {
-    require(voucherSystemEnabled, "Voucher system not enabled");
-    require(address(authorizer) != address(0), "Authorizer not set");
-    require(beneficiary != address(0), "Invalid beneficiary");
-    require(amount > 0, "Invalid amount");
-    require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
-    require(presaleStartTime > 0, "Presale not started");
-    require(block.timestamp >= presaleStartTime, "Presale not started yet");
-    require(block.timestamp <= presaleEndTime, "Presale ended");
-    require(!presaleEnded, "Presale ended");
-    require(voucher.buyer == msg.sender, "Only buyer can use voucher");
-    require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
-    require(voucher.paymentToken == token, "Invalid payment token");
-    
-    TokenPrice memory tokenPrice = tokenPrices[token];
-    require(tokenPrice.isActive, "Token not accepted");
-    
-    // Calculate USD amount for authorization
-    uint256 usdAmount = _convertToUsd(token, amount);
-    
-    // Authorize purchase with voucher
-    bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
-    require(authorized, "Voucher authorization failed");
-    
-    // Use SafeERC20 with balance check
-    uint256 beforeBalance = IERC20(token).balanceOf(address(this));
-    IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-    uint256 afterBalance = IERC20(token).balanceOf(address(this));
-    uint256 received = afterBalance - beforeBalance;
-    
-    // Ensure full amount received (no deflationary tokens)
-    require(received == amount, "Deflationary token not supported");
-    
-    uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
-    
-    // Ensure token amount > 0
-    require(tokenAmount > 0, "Token amount must be greater than zero");
-    
-    _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
-}
+    function buyWithTokenVoucher(
+        address token,
+        uint256 amount,
+        address beneficiary,
+        Authorizer.Voucher calldata voucher,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused {
+        require(voucherSystemEnabled, "Voucher system not enabled");
+        require(address(authorizer) != address(0), "Authorizer not set");
+        require(beneficiary != address(0), "Invalid beneficiary");
+        require(amount > 0, "Invalid amount");
+        require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+        require(voucher.buyer == msg.sender, "Only buyer can use voucher");
+        require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
+        require(voucher.paymentToken == token, "Invalid payment token");
+        
+        TokenPrice memory tokenPrice = tokenPrices[token];
+        require(tokenPrice.isActive, "Token not accepted");
+        
+        // Calculate USD amount for authorization (8 decimals)
+        uint256 usdAmount = (amount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
+        require(usdAmount > 0, "Payment amount too small");
+        
+        // Authorize purchase with voucher
+        bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
+        require(authorized, "Voucher authorization failed");
+        
+        // Calculate token amount BEFORE transferring payment tokens
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
+        
+        // Transfer tokens only after validating token amount > 0 (SafeERC20 handles USDT compatibility)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        
+        _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
+    }
     
     // ============ INTERNAL FUNCTIONS ============
     
@@ -491,28 +484,29 @@ function buyWithTokenVoucher(
     
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
         // Convert payment amount to USD value
-        uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
+        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        require(usdValue > 0, "Payment amount too small");
 
-        // Enforce per-user purchase limit
-        require(totalUsdPurchased[beneficiary] + usdValue <= maxTotalPurchasePerUser, "Exceeds per-user cap");
-        
-        // Track USD spent for analytics (usdValue already has 8 decimals)
-        totalUsdPurchased[beneficiary] += usdValue;
+        // Track USD spent for analytics (no limit enforced)
+        totalUsdPurchased[beneficiary] += usdValue * 1e8;
         
         // Calculate presale tokens (limit enforced at total token level in _processPurchase)
-        return (usdValue * presaleRate) / 1e8;
+        uint256 tokenAmount = (usdValue * presaleRate);
+        require(tokenAmount > 0, "Token amount too small");
+        
+        return tokenAmount;
     }
     
     /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
-    function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
-        // GRO-04: Enforce per-user purchase limit
-        require(totalUsdPurchased[beneficiary] + usdAmount <= maxTotalPurchasePerUser, "Exceeds per-user cap");
-        
-        // Track USD spent for analytics (usdAmount already has 8 decimals)
-        totalUsdPurchased[beneficiary] += usdAmount;
+    /// @dev USD tracking is now handled in _processVoucherPurchase to avoid double counting
+    function _calculateTokenAmountForVoucher(address /* paymentToken */, uint256 /* paymentAmount */, address /* beneficiary */, uint256 usdAmount) internal view returns (uint256) {
+        require(usdAmount > 0, "USD amount too small");
         
         // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
-        return (usdAmount * presaleRate) / 1e8;
+        uint256 tokenAmount = (usdAmount * presaleRate) / 1e8;
+        require(tokenAmount > 0, "Token amount too small");
+        
+        return tokenAmount;
     }
     
     function _processPurchase(
@@ -556,6 +550,12 @@ function buyWithTokenVoucher(
         
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
+        
+        // Calculate and track USD spent for analytics
+        // Note: paymentAmount for native payments is already adjusted for gas buffer
+        TokenPrice memory price = tokenPrices[paymentToken];
+        uint256 usdAmount = (paymentAmount * price.priceUSD) / (10 ** price.decimals);
+        totalUsdPurchased[beneficiary] += usdAmount;
         
         // Update tracking
         purchasedAmounts[beneficiary][paymentToken] += paymentAmount;
@@ -670,14 +670,21 @@ function buyWithTokenVoucher(
         claimed = hasClaimed[user];
     }
     
-    function calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) external view returns (uint256) {
+    function calculateTokenAmount(address paymentToken, uint256 paymentAmount, address /* beneficiary */) external view returns (uint256) {
+        TokenPrice memory price = tokenPrices[paymentToken];
+        require(price.isActive, "Token not accepted");
+        
         // Convert payment amount to USD value
-        uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
+        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        require(usdValue > 0, "Payment amount too small");
         
         // View function for external queries - no limits enforced here
         // Per-user and total token supply limits enforced in actual purchase functions
         // Calculate presale tokens
-        return (usdValue * presaleRate) / 1e8;
+        uint256 tokenAmount = (usdValue * presaleRate);
+        require(tokenAmount > 0, "Token amount too small");
+        
+        return tokenAmount;
     }
     
     function getRemainingTokens() external view returns (uint256) {
