@@ -56,10 +56,15 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256) public totalUsdPurchased; // User's cumulative USD spent (8 decimals)
     mapping(address => bool) public hasClaimed;
     
-    // Presale timing controls
+    // Presale timing controls (for manual startPresale)
     uint256 public presaleStartTime;
     uint256 public presaleEndTime;
     bool public presaleEnded;
+    
+    // Escrow presale timing controls (for autoStartIEscrowPresale)
+    uint256 public escrowPresaleStartTime;
+    uint256 public escrowPresaleEndTime;
+    bool public escrowPresaleEnded;
     
     // Scheduled launch and two rounds
     uint256 public constant PRESALE_LAUNCH_DATE = 1762819200; // Nov 11, 2025 00:00 UTC
@@ -67,10 +72,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant ROUND1_DURATION = 23 days;
     uint256 public constant ROUND2_DURATION = 11 days;
     
+    // Main presale round management
     uint256 public currentRound = 0; // 0 = not started, 1 = round 1, 2 = round 2
     uint256 public round1EndTime;
     uint256 public round1TokensSold;
     uint256 public round2TokensSold;
+    
+    // Escrow presale round management
+    uint256 public escrowCurrentRound = 0; // 0 = not started, 1 = round 1, 2 = round 2
+    uint256 public escrowRound1EndTime;
+    uint256 public escrowRound1TokensSold;
+    uint256 public escrowRound2TokensSold;
     
     // Constants
     address public constant NATIVE_ADDRESS = address(0); // ETH on Ethereum
@@ -283,8 +295,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     ) external onlyGovernance {
         require(priceUSD > 0, "Invalid price");
         require(decimals <= 18, "Invalid decimals");
-        // Prevent price changes during active rounds
-        require(currentRound == 0, "Cannot change prices during active round");
+        // Prevent price changes during active rounds (both main and escrow presales)
+        require(currentRound == 0 && escrowCurrentRound == 0, "Cannot change prices during active round");
         
         tokenPrices[token] = TokenPrice({
             priceUSD: priceUSD,
@@ -307,8 +319,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(tokens.length == decimalsArray.length, "Array length mismatch");
         require(tokens.length == activeArray.length, "Array length mismatch");
         require(tokens.length > 0, "Empty arrays");
-        // Prevent price changes during active rounds
-        require(currentRound == 0, "Cannot change prices during active round");
+        // Prevent price changes during active rounds (both main and escrow presales)
+        require(currentRound == 0 && escrowCurrentRound == 0, "Cannot change prices during active round");
         
         for (uint256 i = 0; i < tokens.length; i++) {
             require(pricesUSD[i] > 0, "Invalid price");
@@ -346,20 +358,21 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Auto-start presale on November 11, 2025 - Anyone can trigger
     function autoStartIEscrowPresale() external {
-        require(presaleStartTime == 0, "Presale already started");
+        require(escrowPresaleStartTime == 0, "Escrow presale already started");
         require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
         
         // Verify contract has enough presale tokens (5B $ESCROW)
         uint256 contractBalance = presaleToken.balanceOf(address(this));
         require(contractBalance >= maxTokensToMint, "Insufficient presale tokens in contract");
         
-        // Start Round 1
-        presaleStartTime = block.timestamp;
-        round1EndTime = block.timestamp + ROUND1_DURATION;
-        presaleEndTime = block.timestamp + MAX_PRESALE_DURATION;
-        currentRound = 1;
+        // Start Escrow Presale Round 1
+        escrowPresaleStartTime = block.timestamp;
+        escrowRound1EndTime = block.timestamp + ROUND1_DURATION;
+        escrowPresaleEndTime = block.timestamp + MAX_PRESALE_DURATION;
+        escrowCurrentRound = 1;
+        escrowPresaleEnded = false;
         
-        emit PresaleStarted(presaleStartTime, presaleEndTime);
+        emit PresaleStarted(escrowPresaleStartTime, escrowPresaleEndTime);
         emit AutoStartTriggered(block.timestamp);
         _handleRoundTransition(0, 1);
     }
@@ -397,6 +410,41 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit PresaleEnded(presaleEndTime);
     }
     
+    // End escrow presale
+    function endEscrowPresale() external onlyGovernance {
+        require(escrowPresaleStartTime > 0, "Escrow presale not started");
+        require(!escrowPresaleEnded, "Escrow presale already ended");
+        if(block.timestamp < escrowPresaleEndTime) revert("Escrow presale not ended yet");
+        escrowPresaleEnded = true;
+        escrowPresaleEndTime = block.timestamp;
+        emit PresaleEnded(escrowPresaleEndTime);
+    }
+    
+    // Extend escrow presale
+    function extendEscrowPresale(uint256 _additionalDuration) external onlyGovernance {
+        require(escrowPresaleStartTime > 0, "Escrow presale not started");
+        require(!escrowPresaleEnded, "Escrow presale already ended");
+        require(_additionalDuration <= 7 days, "Cannot extend more than 7 days");
+        uint256 newEnd = escrowPresaleEndTime + _additionalDuration;
+        require(
+            newEnd <= escrowPresaleStartTime + MAX_PRESALE_DURATION,
+            "Cannot extend beyond max duration"
+        );
+        escrowPresaleEndTime = newEnd;
+    }
+    
+    // Emergency end escrow presale immediately
+    function emergencyEndEscrowPresale() external onlyGovernance {
+        require(escrowPresaleStartTime > 0, "Escrow presale not started");
+        require(!escrowPresaleEnded, "Escrow presale already ended");
+        
+        escrowPresaleEnded = true;
+        escrowPresaleEndTime = block.timestamp;
+        
+        emit EmergencyEnd(block.timestamp);
+        emit PresaleEnded(escrowPresaleEndTime);
+    }
+    
     // Manually advance from Round 1 to Round 2 with required price updates
     function moveToRound2(
         address[] calldata tokens,
@@ -432,6 +480,45 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Advance to round 2
         currentRound = 2;
         round1EndTime = block.timestamp;
+        
+        emit RoundAdvanced(1, 2, block.timestamp);
+    }
+    
+    // Manually advance escrow presale from Round 1 to Round 2 with required price updates
+    function moveEscrowToRound2(
+        address[] calldata tokens,
+        uint256[] calldata pricesUSD,
+        uint8[] calldata decimalsArray,
+        bool[] calldata activeArray
+    ) external onlyGovernance {
+        require(escrowCurrentRound == 1, "Escrow presale not in round 1");
+        require(!escrowPresaleEnded, "Escrow presale already ended");
+        require(tokens.length == pricesUSD.length, "Array length mismatch");
+        require(tokens.length == decimalsArray.length, "Array length mismatch");
+        require(tokens.length == activeArray.length, "Array length mismatch");
+        require(tokens.length > 0, "Must provide round 2 prices");
+        
+        // Set new prices for round 2
+        for (uint256 i = 0; i < tokens.length; i++) {
+            require(pricesUSD[i] > 0, "Invalid price");
+            require(decimalsArray[i] <= 18, "Invalid decimals");
+            
+            TokenPrice memory oldPrice = tokenPrices[tokens[i]];
+            require(oldPrice.priceUSD != pricesUSD[i], "Round 2 price must differ from round 1");
+            
+            tokenPrices[tokens[i]] = TokenPrice({
+                priceUSD: pricesUSD[i],
+                isActive: activeArray[i],
+                decimals: decimalsArray[i]
+            });
+            
+            emit PriceUpdated(tokens[i], pricesUSD[i]);
+            emit TokenStatusUpdated(tokens[i], activeArray[i]);
+        }
+        
+        // Advance escrow presale to round 2
+        escrowCurrentRound = 2;
+        escrowRound1EndTime = block.timestamp;
         
         emit RoundAdvanced(1, 2, block.timestamp);
     }
@@ -489,10 +576,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(address(authorizer) != address(0), "Authorizer not set");
         require(beneficiary != address(0), "Invalid beneficiary");
         require(msg.value > 0, "No native currency sent");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
+        // Check if any presale is active
+        uint8 activeMode = _getActivePresaleMode();
+        require(activeMode == 1 || activeMode == 2, "No presale active");
+        require(activeMode != 3, "Cannot run both presales simultaneously");
         require(voucher.buyer == msg.sender, "Only buyer can use voucher");
         require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
         require(voucher.paymentToken == NATIVE_ADDRESS, "Invalid payment token");
@@ -537,10 +624,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(amount > 0, "Invalid amount");
         require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
+        // Check if any presale is active
+        uint8 activeMode = _getActivePresaleMode();
+        require(activeMode == 1 || activeMode == 2, "No presale active");
+        require(activeMode != 3, "Cannot run both presales simultaneously");
         require(voucher.buyer == msg.sender, "Only buyer can use voucher");
         require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
         require(voucher.paymentToken == token, "Invalid payment token");
@@ -568,13 +655,46 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // ============ INTERNAL FUNCTIONS ============
     
     function _ensurePresaleActive() internal view {
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
+        bool mainPresaleActive = presaleStartTime > 0 &&
+            block.timestamp >= presaleStartTime &&
+            block.timestamp <= presaleEndTime &&
+            !presaleEnded;
+            
+        bool escrowPresaleActive = escrowPresaleStartTime > 0 &&
+            block.timestamp >= escrowPresaleStartTime &&
+            block.timestamp <= escrowPresaleEndTime &&
+            !escrowPresaleEnded;
+        
+        require(mainPresaleActive || escrowPresaleActive, "No presale active");
+    }
+    
+    /// @notice Get active presale mode: 0 = none, 1 = main, 2 = escrow, 3 = both (error case)
+    function _getActivePresaleMode() internal view returns (uint8) {
+        bool mainPresaleActive = presaleStartTime > 0 &&
+            block.timestamp >= presaleStartTime &&
+            block.timestamp <= presaleEndTime &&
+            !presaleEnded;
+            
+        bool escrowPresaleActive = escrowPresaleStartTime > 0 &&
+            block.timestamp >= escrowPresaleStartTime &&
+            block.timestamp <= escrowPresaleEndTime &&
+            !escrowPresaleEnded;
+        
+        if (mainPresaleActive && escrowPresaleActive) {
+            return 3; // Error case - both active
+        } else if (mainPresaleActive) {
+            return 1; // Main presale active
+        } else if (escrowPresaleActive) {
+            return 2; // Escrow presale active
+        } else {
+            return 0; // No presale active
+        }
     }
     
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
+        TokenPrice memory price = tokenPrices[paymentToken];
+        require(price.isActive, "Token not accepted");
+        
         // Convert payment amount to USD value
         uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
         require(usdValue > 0, "Payment amount too small");
@@ -617,11 +737,22 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         totalPurchased[beneficiary] += tokenAmount;
         totalTokensMinted += tokenAmount;
         
-        // Track tokens sold per round
-        if (currentRound == 1) {
-            round1TokensSold += tokenAmount;
-        } else if (currentRound == 2) {
-            round2TokensSold += tokenAmount;
+        // Track tokens sold per round based on active presale mode
+        uint8 activeMode = _getActivePresaleMode();
+        if (activeMode == 1) {
+            // Main presale
+            if (currentRound == 1) {
+                round1TokensSold += tokenAmount;
+            } else if (currentRound == 2) {
+                round2TokensSold += tokenAmount;
+            }
+        } else if (activeMode == 2) {
+            // Escrow presale
+            if (escrowCurrentRound == 1) {
+                escrowRound1TokensSold += tokenAmount;
+            } else if (escrowCurrentRound == 2) {
+                escrowRound2TokensSold += tokenAmount;
+            }
         }
         
         emit TokenPurchase(msg.sender, beneficiary, paymentToken, paymentAmount, tokenAmount);
@@ -654,11 +785,22 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         totalPurchased[beneficiary] += tokenAmount;
         totalTokensMinted += tokenAmount;
         
-        // Track tokens sold per round
-        if (currentRound == 1) {
-            round1TokensSold += tokenAmount;
-        } else if (currentRound == 2) {
-            round2TokensSold += tokenAmount;
+        // Track tokens sold per round based on active presale mode
+        uint8 activeMode = _getActivePresaleMode();
+        if (activeMode == 1) {
+            // Main presale
+            if (currentRound == 1) {
+                round1TokensSold += tokenAmount;
+            } else if (currentRound == 2) {
+                round2TokensSold += tokenAmount;
+            }
+        } else if (activeMode == 2) {
+            // Escrow presale
+            if (escrowCurrentRound == 1) {
+                escrowRound1TokensSold += tokenAmount;
+            } else if (escrowCurrentRound == 2) {
+                escrowRound2TokensSold += tokenAmount;
+            }
         }
         
         // Generate voucher hash for event
@@ -681,28 +823,47 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Check if presale should auto-end
     function _checkAutoEndConditions() internal {
-        // Prevent overwrites if already ended
-        if (presaleEnded) return;
-
+        uint8 activeMode = _getActivePresaleMode();
+        
         // End if all tokens sold
         if (totalTokensMinted >= maxTokensToMint) {
-            presaleEnded = true;
-            presaleEndTime = block.timestamp;
+            if (activeMode == 1) {
+                // End main presale
+                presaleEnded = true;
+                presaleEndTime = block.timestamp;
+            } else if (activeMode == 2) {
+                // End escrow presale
+                escrowPresaleEnded = true;
+                escrowPresaleEndTime = block.timestamp;
+            }
             emit PresaleEndedEarly("All tokens sold", block.timestamp);
             emit PresaleEnded(block.timestamp);
             return;
         }
-
-        // End if presale end time reached
-        if (block.timestamp >= presaleEndTime) {
-            presaleEnded = true;
-            emit PresaleEndedEarly("Presale duration reached", block.timestamp);
-            emit PresaleEnded(block.timestamp);
-            return;
+        
+        // Check duration limits based on active presale
+        if (activeMode == 1) {
+            // Main presale: End if 34 days passed
+            if (block.timestamp >= presaleStartTime + MAX_PRESALE_DURATION) {
+                presaleEnded = true;
+                presaleEndTime = block.timestamp;
+                emit PresaleEndedEarly("Maximum duration reached", block.timestamp);
+                emit PresaleEnded(block.timestamp);
+                return;
+            }
+        } else if (activeMode == 2) {
+            // Escrow presale: End if 34 days passed
+            if (block.timestamp >= escrowPresaleStartTime + MAX_PRESALE_DURATION) {
+                escrowPresaleEnded = true;
+                escrowPresaleEndTime = block.timestamp;
+                emit PresaleEndedEarly("Maximum duration reached", block.timestamp);
+                emit PresaleEnded(block.timestamp);
+                return;
+            }
         }
         
         // Note: Auto-advancement to Round 2 disabled to prevent price inconsistencies
-        // Use moveToRound2() function instead to ensure proper price updates
+        // Use moveToRound2() or moveEscrowToRound2() functions instead to ensure proper price updates
     }
     
     // ============ CLAIM FUNCTIONS ============
@@ -710,7 +871,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function claimTokens() external nonReentrant whenNotPaused {
         require(totalPurchased[msg.sender] > 0, "No tokens to claim");
         require(!hasClaimed[msg.sender], "Already claimed");
-        require(presaleEnded, "Presale not ended yet");
+        require(presaleEnded || escrowPresaleEnded, "No presale ended yet");
         
         uint256 claimAmount = totalPurchased[msg.sender];
         hasClaimed[msg.sender] = true;
@@ -797,17 +958,39 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function isPresaleActive() external view returns (bool) {
-        return presaleStartTime > 0 && 
+        bool mainPresaleActive = presaleStartTime > 0 && 
                block.timestamp >= presaleStartTime && 
                block.timestamp <= presaleEndTime && 
                !presaleEnded;
+               
+        bool escrowPresaleActive = escrowPresaleStartTime > 0 && 
+               block.timestamp >= escrowPresaleStartTime && 
+               block.timestamp <= escrowPresaleEndTime && 
+               !escrowPresaleEnded;
+               
+        return mainPresaleActive || escrowPresaleActive;
     }
     
     function canClaim() external view returns (bool) {
-        return presaleEnded;
+        return presaleEnded || escrowPresaleEnded;
     }
     
-    // Get comprehensive presale status
+    // Get escrow presale status
+    function getEscrowPresaleStatus() external view returns (
+        bool started,
+        bool ended,
+        uint256 startTime,
+        uint256 endTime,
+        uint256 currentTime
+    ) {
+        started = escrowPresaleStartTime > 0;
+        ended = escrowPresaleEnded;
+        startTime = escrowPresaleStartTime;
+        endTime = escrowPresaleEndTime;
+        currentTime = block.timestamp;
+    }
+    
+    // Get comprehensive escrow presale status
     function getIEscrowPresaleStatus() external view returns (
         uint256 currentRoundNumber,
         uint256 roundTimeRemaining,
@@ -818,30 +1001,30 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         bool canPurchase,
         string memory statusMessage
     ) {
-        currentRoundNumber = currentRound;
-        round1Sold = round1TokensSold;
-        round2Sold = round2TokensSold;
+        currentRoundNumber = escrowCurrentRound;
+        round1Sold = escrowRound1TokensSold;
+        round2Sold = escrowRound2TokensSold;
         tokensRemainingTotal = maxTokensToMint - totalTokensMinted;
         
-        if (presaleEnded) {
+        if (escrowPresaleEnded) {
             canPurchase = false;
-            statusMessage = "Presale ended";
+            statusMessage = "Escrow presale ended";
             roundTimeRemaining = 0;
             totalTimeRemaining = 0;
-        } else if (currentRound == 0) {
+        } else if (escrowCurrentRound == 0) {
             canPurchase = false;
-            statusMessage = "Presale starts Nov 11, 2025";
+            statusMessage = "Escrow presale starts Nov 11, 2025";
             roundTimeRemaining = block.timestamp >= PRESALE_LAUNCH_DATE ? 0 : PRESALE_LAUNCH_DATE - block.timestamp;
             totalTimeRemaining = roundTimeRemaining;
-        } else if (currentRound == 1) {
+        } else if (escrowCurrentRound == 1) {
             canPurchase = true;
-            statusMessage = "Round 1 Active";
-            roundTimeRemaining = block.timestamp >= round1EndTime ? 0 : round1EndTime - block.timestamp;
-            totalTimeRemaining = block.timestamp >= presaleEndTime ? 0 : presaleEndTime - block.timestamp;
-        } else if (currentRound == 2) {
+            statusMessage = "Escrow Round 1 Active";
+            roundTimeRemaining = block.timestamp >= escrowRound1EndTime ? 0 : escrowRound1EndTime - block.timestamp;
+            totalTimeRemaining = block.timestamp >= escrowPresaleEndTime ? 0 : escrowPresaleEndTime - block.timestamp;
+        } else if (escrowCurrentRound == 2) {
             canPurchase = true;
-            statusMessage = "Round 2 Active";
-            roundTimeRemaining = block.timestamp >= presaleEndTime ? 0 : presaleEndTime - block.timestamp;
+            statusMessage = "Escrow Round 2 Active";
+            roundTimeRemaining = block.timestamp >= escrowPresaleEndTime ? 0 : escrowPresaleEndTime - block.timestamp;
             totalTimeRemaining = roundTimeRemaining;
         }
         
@@ -897,8 +1080,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Anyone can call to trigger auto-end checks
     function checkAutoEndConditions() external {
-        require(presaleStartTime > 0, "Presale not started");
-        require(!presaleEnded, "Presale already ended");
+        uint8 activeMode = _getActivePresaleMode();
+        require(activeMode == 1 || activeMode == 2, "No presale active");
         _checkAutoEndConditions();
     }
     
@@ -1034,6 +1217,56 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 oldBuffer = gasBuffer;
         gasBuffer = _gasBuffer;
         emit GasBufferUpdated(oldBuffer, _gasBuffer);
+    }
+    
+    /// @notice Get active presale mode for external consumption
+    function getActivePresaleMode() external view returns (uint8) {
+        return _getActivePresaleMode();
+    }
+    
+    /// @notice Get comprehensive status of both presale modes
+    function getBothPresalesStatus() external view returns (
+        bool mainStarted,
+        bool mainEnded,
+        bool escrowStarted,
+        bool escrowEnded,
+        uint8 activeMode,
+        string memory statusMessage
+    ) {
+        mainStarted = presaleStartTime > 0;
+        mainEnded = presaleEnded;
+        escrowStarted = escrowPresaleStartTime > 0;
+        escrowEnded = escrowPresaleEnded;
+        activeMode = _getActivePresaleMode();
+        
+        if (activeMode == 0) {
+            statusMessage = "No presale active";
+        } else if (activeMode == 1) {
+            statusMessage = "Main presale active";
+        } else if (activeMode == 2) {
+            statusMessage = "Escrow presale active";
+        } else if (activeMode == 3) {
+            statusMessage = "ERROR: Both presales active";
+        }
+    }
+    
+    /// @notice Get escrow presale round allocation details
+    function getEscrowRoundAllocation() external view returns (
+        uint256 round1Sold,
+        uint256 round2Sold,
+        uint256 round1Remaining,
+        uint256 round2Remaining,
+        uint256 totalRemaining
+    ) {
+        round1Sold = escrowRound1TokensSold;
+        round2Sold = escrowRound2TokensSold;
+        totalRemaining = maxTokensToMint - totalTokensMinted;
+        
+        // For display purposes - no hard limits per round in iEscrow spec
+        round1Remaining = totalRemaining;
+        round2Remaining = totalRemaining;
+        
+        return (round1Sold, round2Sold, round1Remaining, round2Remaining, totalRemaining);
     }
     
     
