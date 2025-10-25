@@ -283,6 +283,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     ) external onlyGovernance {
         require(priceUSD > 0, "Invalid price");
         require(decimals <= 18, "Invalid decimals");
+        // Prevent price changes during active rounds
+        require(currentRound == 0, "Cannot change prices during active round");
         
         tokenPrices[token] = TokenPrice({
             priceUSD: priceUSD,
@@ -292,6 +294,35 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         emit PriceUpdated(token, priceUSD);
         emit TokenStatusUpdated(token, isActive);
+    }
+    
+    /// @notice Set multiple token prices atomically (only when no round is active)
+    function setTokenPrices(
+        address[] calldata tokens,
+        uint256[] calldata pricesUSD,
+        uint8[] calldata decimalsArray,
+        bool[] calldata activeArray
+    ) external onlyGovernance {
+        require(tokens.length == pricesUSD.length, "Array length mismatch");
+        require(tokens.length == decimalsArray.length, "Array length mismatch");
+        require(tokens.length == activeArray.length, "Array length mismatch");
+        require(tokens.length > 0, "Empty arrays");
+        // Prevent price changes during active rounds
+        require(currentRound == 0, "Cannot change prices during active round");
+        
+        for (uint256 i = 0; i < tokens.length; i++) {
+            require(pricesUSD[i] > 0, "Invalid price");
+            require(decimalsArray[i] <= 18, "Invalid decimals");
+            
+            tokenPrices[tokens[i]] = TokenPrice({
+                priceUSD: pricesUSD[i],
+                isActive: activeArray[i],
+                decimals: decimalsArray[i]
+            });
+            
+            emit PriceUpdated(tokens[i], pricesUSD[i]);
+            emit TokenStatusUpdated(tokens[i], activeArray[i]);
+        }
     }
     
     // Presale timing controls
@@ -366,12 +397,73 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit PresaleEnded(presaleEndTime);
     }
     
-    // Manually advance from Round 1 to Round 2
-    function moveToRound2() external onlyGovernance {
+    // Manually advance from Round 1 to Round 2 with required price updates
+    function moveToRound2(
+        address[] calldata tokens,
+        uint256[] calldata pricesUSD,
+        uint8[] calldata decimalsArray,
+        bool[] calldata activeArray
+    ) external onlyGovernance {
         require(currentRound == 1, "Not in round 1");
         require(!presaleEnded, "Presale already ended");
+        require(tokens.length == pricesUSD.length, "Array length mismatch");
+        require(tokens.length == decimalsArray.length, "Array length mismatch");
+        require(tokens.length == activeArray.length, "Array length mismatch");
+        require(tokens.length > 0, "Must provide round 2 prices");
         
-        _handleRoundTransition(1, 2);
+        // Set new prices for round 2
+        for (uint256 i = 0; i < tokens.length; i++) {
+            require(pricesUSD[i] > 0, "Invalid price");
+            require(decimalsArray[i] <= 18, "Invalid decimals");
+            
+            TokenPrice memory oldPrice = tokenPrices[tokens[i]];
+            require(oldPrice.priceUSD != pricesUSD[i], "Round 2 price must differ from round 1");
+            
+            tokenPrices[tokens[i]] = TokenPrice({
+                priceUSD: pricesUSD[i],
+                isActive: activeArray[i],
+                decimals: decimalsArray[i]
+            });
+            
+            emit PriceUpdated(tokens[i], pricesUSD[i]);
+            emit TokenStatusUpdated(tokens[i], activeArray[i]);
+        }
+        
+        // Advance to round 2
+        currentRound = 2;
+        round1EndTime = block.timestamp;
+        
+        emit RoundAdvanced(1, 2, block.timestamp);
+    }
+    
+    /// @notice Emergency function to update prices during round transitions (use with extreme caution)
+    /// @dev Only to be used if auto-advancement occurred without price updates
+    function emergencyUpdatePrices(
+        address[] calldata tokens,
+        uint256[] calldata pricesUSD,
+        uint8[] calldata decimalsArray,
+        bool[] calldata activeArray
+    ) external onlyGovernance {
+        require(tokens.length == pricesUSD.length, "Array length mismatch");
+        require(tokens.length == decimalsArray.length, "Array length mismatch");
+        require(tokens.length == activeArray.length, "Array length mismatch");
+        require(tokens.length > 0, "Empty arrays");
+        // Only allow during active presale for emergency situations
+        require(presaleStartTime > 0 && !presaleEnded, "Presale not active");
+        
+        for (uint256 i = 0; i < tokens.length; i++) {
+            require(pricesUSD[i] > 0, "Invalid price");
+            require(decimalsArray[i] <= 18, "Invalid decimals");
+            
+            tokenPrices[tokens[i]] = TokenPrice({
+                priceUSD: pricesUSD[i],
+                isActive: activeArray[i],
+                decimals: decimalsArray[i]
+            });
+            
+            emit PriceUpdated(tokens[i], pricesUSD[i]);
+            emit TokenStatusUpdated(tokens[i], activeArray[i]);
+        }
     }
     
     // ============ VOUCHER-ONLY PURCHASE FUNCTIONS ============
@@ -608,11 +700,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             emit PresaleEnded(block.timestamp);
             return;
         }
-
-        // Auto-advance from Round 1 to Round 2 if Round 1 time is up
-        if (currentRound == 1 && block.timestamp >= round1EndTime) {
-            _handleRoundTransition(1, 2);
-        }
+        
+        // Note: Auto-advancement to Round 2 disabled to prevent price inconsistencies
+        // Use moveToRound2() function instead to ensure proper price updates
     }
     
     // ============ CLAIM FUNCTIONS ============

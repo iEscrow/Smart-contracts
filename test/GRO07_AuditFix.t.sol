@@ -27,14 +27,14 @@ contract GRO07AuditFixTest is Test {
     MultiTokenPresale presale;
     Authorizer authorizer;
     EscrowToken escrowToken;
-    MockERC20 wbtc;
+    MockERC20 usdc;
     
     address owner = address(0x1);
     address buyer = address(0x2);
     address treasury = address(0x3);
     address staking = address(0x4);
     
-    uint256 constant WBTC_PRICE = 60000 * 1e8; // $60,000 per WBTC (8 decimals USD)
+    uint256 constant USDC_PRICE = 1 * 1e8; // $1 per USDC (8 decimals USD)
     uint256 constant PRESALE_RATE = 666666666666666667000; // Tokens per USD (18 decimals)
     uint256 constant MAX_TOKENS = 5000000000 * 1e18; // 5B tokens
     
@@ -46,23 +46,22 @@ contract GRO07AuditFixTest is Test {
         
         // Deploy mock tokens
         escrowToken = new EscrowToken();
-        wbtc = new MockERC20("Wrapped Bitcoin", "WBTC", 8);
+        usdc = new MockERC20("USD Coin", "USDC", 6);
         
         // Deploy authorizer
         authorizer = new Authorizer(signer, owner);
         
-        // Deploy presale contract
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
             MAX_TOKENS
         );
         
-        // Setup WBTC token with realistic price
+        // Setup USDC token with standard price
         presale.setTokenPrice(
-            address(wbtc),
-            WBTC_PRICE,
-            8, // WBTC decimals
+            address(usdc),
+            USDC_PRICE,
+            6, // USDC decimals
             true // active
         );
         
@@ -71,14 +70,10 @@ contract GRO07AuditFixTest is Test {
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         
-        // Start presale (we need to advance time first)
-        vm.warp(1762819200); // Nov 11, 2025
-        presale.autoStartIEscrowPresale();
-        
         vm.stopPrank();
         
-        // Mint WBTC to buyer
-        wbtc.mint(buyer, 1000000); // 0.01 WBTC
+        // Mint USDC to buyer
+        usdc.mint(buyer, 100000 * 1e6); // 100,000 USDC
         
         vm.deal(buyer, 100 ether);
     }
@@ -128,93 +123,104 @@ contract GRO07AuditFixTest is Test {
         return abi.encodePacked(r, s, v);
     }
     
-    function testGRO07_SmallWBTCAmountRevertsBeforeTransfer() public {
+    function testGRO07_SmallUSDCAmountRevertsBeforeTransfer() public {
         // With the voucher system USD calculation: (amount * priceUSD) / (10^decimals)
-        // For usdAmount to be 0: (amount * 60000 * 1e8) / (10^8) < 1
-        // This means: amount * 60000 < 1, so amount < 1/60000 ≈ 0.0000166
-        // Since WBTC has 8 decimals, this is impossible with current implementation
-        // However, for testing let's use a price that makes this possible
+        // For usdAmount to be 0: (amount * priceUSD) / (10^decimals) < 1
+        // With USDC (6 decimals), if we set a very small price, small amounts can result in 0 USD
+        // For testing, let's use a very small price that makes this possible
         vm.startPrank(owner);
-        presale.setTokenPrice(address(wbtc), 1, 8, true); // Set very low price: $0.00000001
+        presale.setTokenPrice(address(usdc), 1, 6, true); // Set very low price: $0.00000001 per USDC
+        
+        // Start presale after setting the price
+        vm.warp(1762819200); // Nov 11, 2025
+        presale.autoStartIEscrowPresale();
         vm.stopPrank();
         
         vm.startPrank(buyer);
-        uint256 smallAmount = 50; // This should result in usdAmount = 0
+        uint256 smallAmount = 50; // 50 micro-USDC, should result in usdAmount = 0
         
-        // Approve WBTC spending
-        wbtc.approve(address(presale), 10000);
+        // Approve USDC spending
+        usdc.approve(address(presale), 10000);
         
         // Create voucher for small purchase
         Authorizer.Voucher memory voucher = _createVoucherWithCurrentNonce(
             buyer,
             buyer,
-            address(wbtc)
+            address(usdc)
         );
         
         bytes memory signature = _signVoucher(voucher);
         
-        // This should revert with "USD amount too small" BEFORE transferring WBTC
-        uint256 balanceBefore = wbtc.balanceOf(buyer);
+        // This should revert with "Payment amount too small" BEFORE transferring USDC
+        uint256 balanceBefore = usdc.balanceOf(buyer);
         
         vm.expectRevert("Payment amount too small");
         presale.buyWithTokenVoucher(
-            address(wbtc),
+            address(usdc),
             smallAmount,
             buyer,
             voucher,
             signature
         );
         
-        // Verify no WBTC was transferred
-        uint256 balanceAfter = wbtc.balanceOf(buyer);
-        assertEq(balanceAfter, balanceBefore, "WBTC should not have been transferred");
+        // Verify no USDC was transferred
+        uint256 balanceAfter = usdc.balanceOf(buyer);
+        assertEq(balanceAfter, balanceBefore, "USDC should not have been transferred");
         
         vm.stopPrank();
     }
     
     function testGRO07_ViewFunctionRevertsForSmallAmounts() public {
+        // Start presale first
+        vm.warp(1762819200); // Nov 11, 2025
+        presale.autoStartIEscrowPresale();
+        
         // Test the view function also reverts for small amounts
         uint256 smallAmount = 1000; // Below threshold
         
         vm.expectRevert("Payment amount too small");
-        presale.calculateTokenAmount(address(wbtc), smallAmount, buyer);
+        presale.calculateTokenAmount(address(usdc), smallAmount, buyer);
     }
     
     function testGRO07_ValidAmountStillWorks() public {
+        // Start presale first
+        vm.warp(1762819200); // Nov 11, 2025
+        presale.autoStartIEscrowPresale();
+        
         vm.startPrank(buyer);
         
         // Use an amount that definitely results in > 0 tokens
-        uint256 validAmount = 10000; // 0.0001 WBTC = ~$6
+        uint256 validAmount = 1000 * 1e6; // 1000 USDC = $1000
         
-        // Approve WBTC spending
-        wbtc.approve(address(presale), validAmount);
+        // Approve USDC spending
+        usdc.approve(address(presale), validAmount);
         
         // Create voucher for valid purchase
         Authorizer.Voucher memory voucher = _createVoucherWithCurrentNonce(
             buyer,
             buyer,
-            address(wbtc)
+            address(usdc)
         );
         
         bytes memory signature = _signVoucher(voucher);
         
         // This should succeed
-        uint256 balanceBefore = wbtc.balanceOf(buyer);
+        uint256 balanceBefore = usdc.balanceOf(buyer);
         uint256 tokensBefore = presale.totalPurchased(buyer);
         
         presale.buyWithTokenVoucher(
-            address(wbtc),
+            address(usdc),
             validAmount,
             buyer,
             voucher,
             signature
         );
         
-        // Verify WBTC was transferred and tokens were purchased
-        uint256 balanceAfter = wbtc.balanceOf(buyer);
+        // Verify USDC was transferred and tokens were purchased
+        uint256 balanceAfter = usdc.balanceOf(buyer);
         uint256 tokensAfter = presale.totalPurchased(buyer);
         
-        assertLt(balanceAfter, balanceBefore, "WBTC should have been transferred");
+        assertLt(balanceAfter, balanceBefore, "USDC should have been transferred");
         assertGt(tokensAfter, tokensBefore, "Presale tokens should have been purchased");
         
         vm.stopPrank();
@@ -225,22 +231,26 @@ contract GRO07AuditFixTest is Test {
         
         // Set a low price to test the threshold where usdValue becomes 0
         vm.startPrank(owner);
-        presale.setTokenPrice(address(wbtc), 100, 8, true); // $0.000001 per WBTC
+        presale.setTokenPrice(address(usdc), 100, 6, true); // $0.000001 per USDC
+        
+        // Start presale after setting the price
+        vm.warp(1762819200); // Nov 11, 2025
+        presale.autoStartIEscrowPresale();
         vm.stopPrank();
         
-        // With this price: usdValue = (amount * 100) / (10^8 * 10^8) = amount * 100 / 1e16
-        // For usdValue = 1: amount = 1e16 / 100 = 1e14
+        // With this price: usdValue = (amount * 100) / (10^6 * 10^8) = amount * 100 / 1e14
+        // For usdValue = 1: amount = 1e14 / 100 = 1e12
         
         // Small amount should revert
         vm.expectRevert("Payment amount too small");
-        presale.calculateTokenAmount(address(wbtc), 1e13, buyer); // Below threshold
+        presale.calculateTokenAmount(address(usdc), 1e11, buyer); // Below threshold
         
         // At threshold should work
-        uint256 tokensAtThreshold = presale.calculateTokenAmount(address(wbtc), 1e14, buyer);
+        uint256 tokensAtThreshold = presale.calculateTokenAmount(address(usdc), 1e12, buyer);
         assertGt(tokensAtThreshold, 0, "Should get tokens at threshold");
         
         // Above threshold should definitely work
-        uint256 tokensAboveThreshold = presale.calculateTokenAmount(address(wbtc), 1e15, buyer);
+        uint256 tokensAboveThreshold = presale.calculateTokenAmount(address(usdc), 1e13, buyer);
         assertGt(tokensAboveThreshold, tokensAtThreshold, "Should get more tokens above threshold");
     }
 }

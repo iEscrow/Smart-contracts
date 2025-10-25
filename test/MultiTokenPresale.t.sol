@@ -281,8 +281,8 @@ contract MultiTokenPresaleTest is Test {
         // Make a purchase to trigger round check
         _makePurchase(buyer1, 0.001 ether, 0);
         
-        // Should auto-advance to round 2
-        assertEq(presale.currentRound(), 2);
+        // Should still be in round 1 (auto-advancement disabled)
+        assertEq(presale.currentRound(), 1);
     }
     
     function testManualRoundAdvancement() public {
@@ -290,9 +290,19 @@ contract MultiTokenPresaleTest is Test {
         
         assertEq(presale.currentRound(), 1);
         
-        // Owner can manually advance
+        // Owner can manually advance with new prices
+        address[] memory tokens = new address[](1);
+        uint256[] memory prices = new uint256[](1);
+        uint8[] memory decimalsArray = new uint8[](1);
+        bool[] memory activeArray = new bool[](1);
+        
+        tokens[0] = address(mockUSDC);
+        prices[0] = 2 * 1e8; // Different from round 1 price of $1
+        decimalsArray[0] = 6;
+        activeArray[0] = true;
+        
         vm.prank(owner);
-        presale.moveToRound2();
+        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
         
         assertEq(presale.currentRound(), 2);
     }
@@ -431,9 +441,19 @@ contract MultiTokenPresaleTest is Test {
     function testSuccessfulPurchaseRound2() public {
         _startPresale();
         
-        // Move to round 2
+        // Move to round 2 with new prices
+        address[] memory tokens = new address[](1);
+        uint256[] memory prices = new uint256[](1);
+        uint8[] memory decimalsArray = new uint8[](1);
+        bool[] memory activeArray = new bool[](1);
+        
+        tokens[0] = presale.NATIVE_ADDRESS();
+        prices[0] = 4500 * 1e8; // Different from round 1 price of $4200
+        decimalsArray[0] = 18;
+        activeArray[0] = true;
+        
         vm.prank(owner);
-        presale.moveToRound2();
+        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
         
         _makePurchase(buyer1, 0.01 ether, 0);
         
@@ -737,11 +757,11 @@ contract MultiTokenPresaleTest is Test {
     // ========== EDGE CASES ==========
     
     function testCannotPurchaseWithInactiveToken() public {
-        _startPresale();
-        
-        // Disable USDC
+        // Disable USDC BEFORE starting presale (when currentRound == 0)
         vm.prank(owner);
         presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, false);
+        
+        _startPresale();
         
         vm.startPrank(buyer1);
         mockUSDC.approve(address(presale), 1000 * 1e6);
