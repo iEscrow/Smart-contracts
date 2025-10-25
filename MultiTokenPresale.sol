@@ -371,6 +371,13 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ INTERNAL FUNCTIONS ============
     
+    function _ensurePresaleActive() internal view {
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+    }
+    
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
         TokenPrice memory price = tokenPrices[paymentToken];
         require(price.isActive, "Token not accepted");
@@ -402,7 +409,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address paymentToken,
         uint256 paymentAmount,
         uint256 tokenAmount
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
@@ -431,7 +440,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 paymentAmount,
         uint256 tokenAmount,
         Authorizer.Voucher calldata voucher
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
