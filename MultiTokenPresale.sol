@@ -408,11 +408,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         TokenPrice memory nativePrice = tokenPrices[NATIVE_ADDRESS];
         require(nativePrice.isActive, "Native currency not accepted");
         
-        // Estimate gas cost and deduct from payment
-        uint256 gasCost = _estimateGasCost();
-        require(msg.value > gasCost, "Insufficient payment after gas");
-        
-        uint256 paymentAmount = msg.value - gasCost;
+        // Apply configured gas buffer (if any) to keep allocation independent from tx.gasprice
+        uint256 paymentAmount = _applyGasBuffer(msg.value);
         
         // Calculate USD amount for authorization
         uint256 usdAmount = _convertToUsd(NATIVE_ADDRESS, paymentAmount);
@@ -926,35 +923,14 @@ function buyWithTokenVoucher(
         }
     }
     
-    // Gas estimation function
-    function _estimateGasCost() internal view returns (uint256) {
-        // Get current gas price
-        uint256 gasPrice = tx.gasprice;
-        
-        // Estimate gas usage based on operation complexity
-        uint256 estimatedGasUsed = _getEstimatedGasUsage();
-        
-        // Add 20% buffer for safety
-        uint256 gasWithBuffer = (estimatedGasUsed * 120) / 100;
-        
-        return gasPrice * gasWithBuffer;
-    }
-    
-    // Estimate gas usage based on operation
-    function _getEstimatedGasUsage() internal pure returns (uint256) {
-        // Base gas for contract call
-        uint256 baseGas = 21000;
-        
-        // Gas for storage operations
-        uint256 storageGas = 20000; // For updating mappings
-        
-        // Gas for calculations
-        uint256 calculationGas = 10000; // For price calculations
-        
-        // Gas for events
-        uint256 eventGas = 5000; // For emitting events
-        
-        return baseGas + storageGas + calculationGas + eventGas;
+    // Apply an owner-configurable buffer so allocations don't depend on tx.gasprice
+    function _applyGasBuffer(uint256 amount) internal view returns (uint256) {
+        uint256 buffer = gasBuffer;
+        if (buffer == 0) {
+            return amount;
+        }
+        require(amount > buffer, "Insufficient payment after gas buffer");
+        return amount - buffer;
     }
     
     function setGasBuffer(uint256 _gasBuffer) external onlyGovernance {
