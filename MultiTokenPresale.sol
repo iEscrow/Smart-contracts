@@ -481,6 +481,13 @@ function buyWithTokenVoucher(
     
     // ============ INTERNAL FUNCTIONS ============
     
+    function _ensurePresaleActive() internal view {
+        require(presaleStartTime > 0, "Presale not started");
+        require(block.timestamp >= presaleStartTime, "Presale not started yet");
+        require(block.timestamp <= presaleEndTime, "Presale ended");
+        require(!presaleEnded, "Presale ended");
+    }
+    
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
         // Convert payment amount to USD value
         uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
@@ -505,7 +512,9 @@ function buyWithTokenVoucher(
         address paymentToken,
         uint256 paymentAmount,
         uint256 tokenAmount
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
@@ -534,7 +543,9 @@ function buyWithTokenVoucher(
         uint256 paymentAmount,
         uint256 tokenAmount,
         Authorizer.Voucher calldata voucher
-    ) internal {     
+    ) internal {
+        _ensurePresaleActive();
+        
         // Check if we can mint enough tokens
         require(totalTokensMinted + tokenAmount <= maxTokensToMint, "Not enough tokens left");
         
