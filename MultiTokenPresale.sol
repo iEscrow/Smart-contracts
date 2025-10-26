@@ -56,6 +56,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256) public totalUsdPurchased; // User's cumulative USD spent (8 decimals)
     mapping(address => bool) public hasClaimed;
     
+    // GRO-19: In-contract replay protection (defense-in-depth)
+    mapping(bytes32 => bool) private usedVoucherHashes; // Track consumed voucher hashes independently
+    
     // Presale timing controls (for manual startPresale)
     uint256 public presaleStartTime;
     uint256 public presaleEndTime;
@@ -126,6 +129,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount,
         bytes32 voucherHash
     );
+    event VoucherHashConsumed(bytes32 indexed voucherHash, address indexed buyer);
     event TreasuryUpdateRequested(address indexed newTreasury);
     event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
     event GovernanceExecutorActivated(address indexed executor);
@@ -600,9 +604,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
         require(usdAmount > 0, "Payment amount too small");
         
-        // Authorize purchase with voucher
+        // GRO-19: In-contract replay protection (defense-in-depth)
+        bytes32 voucherHash = _computeVoucherHash(voucher);
+        require(!usedVoucherHashes[voucherHash], "Voucher already used in this contract");
+        
+        // Authorize purchase with voucher (external Authorizer)
         bool authorized = authorizer.authorize(voucher, signature, NATIVE_ADDRESS, usdAmount);
         require(authorized, "Voucher authorization failed");
+        
+        // Mark voucher as used in this contract
+        usedVoucherHashes[voucherHash] = true;
+        emit VoucherHashConsumed(voucherHash, voucher.buyer);
         
         uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, paymentAmount, beneficiary, usdAmount);
         require(tokenAmount > 0, "Token amount too small");
@@ -649,8 +661,16 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 usdAmount = (actualAmount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
         require(usdAmount > 0, "Payment amount too small");
         
-        // Authorize purchase with voucher
+        // GRO-19: In-contract replay protection (defense-in-depth)
+        bytes32 voucherHash = _computeVoucherHash(voucher);
+        require(!usedVoucherHashes[voucherHash], "Voucher already used in this contract");
+        
+        // Authorize purchase with voucher (external Authorizer)
         require(authorizer.authorize(voucher, signature, token, usdAmount), "Voucher authorization failed");
+        
+        // Mark voucher as used in this contract
+        usedVoucherHashes[voucherHash] = true;
+        emit VoucherHashConsumed(voucherHash, voucher.buyer);
         
         // Calculate token amount based on actual received amount
         uint256 tokenAmount = _calculateTokenAmountForVoucher(token, actualAmount, beneficiary, usdAmount);
@@ -1245,6 +1265,28 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 oldBuffer = gasBuffer;
         gasBuffer = _gasBuffer;
         emit GasBufferUpdated(oldBuffer, _gasBuffer);
+    }
+    
+    /// @notice Compute voucher hash for in-contract replay protection (GRO-19)
+    /// @param voucher The voucher to hash
+    /// @return Hash of the voucher
+    function _computeVoucherHash(Authorizer.Voucher calldata voucher) internal pure returns (bytes32) {
+        return keccak256(abi.encode(
+            voucher.buyer,
+            voucher.beneficiary,
+            voucher.paymentToken,
+            voucher.usdLimit,
+            voucher.nonce,
+            voucher.deadline,
+            voucher.presale
+        ));
+    }
+    
+    /// @notice Check if a voucher hash has been used in this contract (GRO-19)
+    /// @param voucherHash Hash of the voucher
+    /// @return True if already used
+    function isVoucherUsed(bytes32 voucherHash) external view returns (bool) {
+        return usedVoucherHashes[voucherHash];
     }
     
     /// @notice Get active presale mode for external consumption
