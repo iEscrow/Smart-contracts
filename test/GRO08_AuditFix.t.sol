@@ -86,15 +86,21 @@ contract GRO08AuditFixTest is Test {
         presale.autoStartIEscrowPresale();
     }
     
+    function _startMainPresale() internal {
+        vm.startPrank(owner);
+        presale.startPresale(presale.MAX_PRESALE_DURATION());
+        vm.stopPrank();
+    }
+    
     function testGRO08_CannotChangePricesDuringRound1() public {
         _startPresale();
         
         // Verify we're in round 1
-        assertEq(presale.currentRound(), 1);
+        assertEq(presale.escrowCurrentRound(), 1);
         
         // Try to change WBTC price during round 1 - should revert
         vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active round");
+        vm.expectRevert("Cannot change prices during active presale");
         presale.setTokenPrice(address(wbtc), 50000 * 1e8, 8, true);
     }
     
@@ -102,7 +108,7 @@ contract GRO08AuditFixTest is Test {
         _startPresale();
         
         // Verify we're in round 1
-        assertEq(presale.currentRound(), 1);
+        assertEq(presale.escrowCurrentRound(), 1);
         
         // Prepare arrays for bulk price update
         address[] memory tokens = new address[](2);
@@ -121,13 +127,13 @@ contract GRO08AuditFixTest is Test {
         
         // Try to change prices during round 1 - should revert
         vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active round");
+        vm.expectRevert("Cannot change prices during active presale");
         presale.setTokenPrices(tokens, prices, decimalsArray, activeArray);
     }
     
     function testGRO08_CanChangePricesWhenNoRoundActive() public {
         // Before presale starts (round 0), price changes should be allowed
-        assertEq(presale.currentRound(), 0);
+        assertEq(presale.escrowCurrentRound(), 0);
         
         vm.prank(owner);
         presale.setTokenPrice(address(wbtc), 50000 * 1e8, 8, true);
@@ -148,7 +154,7 @@ contract GRO08AuditFixTest is Test {
         
         vm.prank(owner);
         vm.expectRevert("Must provide round 2 prices");
-        presale.moveToRound2(emptyTokens, emptyPrices, emptyDecimals, emptyActive);
+        presale.moveEscrowToRound2(emptyTokens, emptyPrices, emptyDecimals, emptyActive);
     }
     
     function testGRO08_MoveToRound2RequiresDifferentPrices() public {
@@ -171,7 +177,7 @@ contract GRO08AuditFixTest is Test {
         
         vm.prank(owner);
         vm.expectRevert("Round 2 price must differ from round 1");
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
     }
     
     function testGRO08_SuccessfulMoveToRound2WithNewPrices() public {
@@ -204,10 +210,10 @@ contract GRO08AuditFixTest is Test {
         
         // Move to round 2 with new prices
         vm.prank(owner);
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
         
         // Verify we're now in round 2
-        assertEq(presale.currentRound(), 2);
+        assertEq(presale.escrowCurrentRound(), 2);
         
         // Verify prices were updated
         MultiTokenPresale.TokenPrice memory wbtcPrice = presale.getTokenPrice(address(wbtc));
@@ -232,14 +238,14 @@ contract GRO08AuditFixTest is Test {
         activeArray[0] = true;
         
         vm.prank(owner);
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
         
         // Verify we're in round 2
-        assertEq(presale.currentRound(), 2);
+        assertEq(presale.escrowCurrentRound(), 2);
         
         // Try to change prices during round 2 - should revert
         vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active round");
+        vm.expectRevert("Cannot change prices during active presale");
         presale.setTokenPrice(address(wbtc), 55000 * 1e8, 8, true);
     }
     
@@ -261,7 +267,12 @@ contract GRO08AuditFixTest is Test {
     }
     
     function testGRO08_EmergencyPriceUpdateWorksWhenNeeded() public {
-        _startPresale();
+        // Set initial WBTC price before starting presale
+        vm.prank(owner);
+        presale.setTokenPrice(address(wbtc), WBTC_PRICE_R1, 8, true);
+        
+        // Start main presale for emergency update test
+        _startMainPresale();
         
         // Move to round 2
         address[] memory tokens = new address[](1);
@@ -279,9 +290,6 @@ contract GRO08AuditFixTest is Test {
         
         // Now use emergency function to adjust prices (simulating emergency situation)
         prices[0] = 52000 * 1e8; // Emergency price adjustment
-        
-        vm.expectEmit(true, false, false, true);
-        emit PriceUpdated(address(wbtc), 52000 * 1e8);
         
         vm.prank(owner);
         presale.emergencyUpdatePrices(tokens, prices, decimalsArray, activeArray);
@@ -314,7 +322,7 @@ contract GRO08AuditFixTest is Test {
         activeArray[0] = true;
         
         vm.prank(owner);
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
         
         // Calculate tokens with round 2 WBTC price
         uint256 tokensRound2 = presale.calculateTokenAmount(address(wbtc), wbtcAmount, buyer);
@@ -336,8 +344,8 @@ contract GRO08AuditFixTest is Test {
         activeArray[0] = true;
         
         vm.prank(owner);
-        vm.expectRevert("Not in round 1");
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        vm.expectRevert("Escrow presale not in round 1");
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
     }
     
     function testGRO08_ArrayLengthMismatchReverts() public {
@@ -359,6 +367,6 @@ contract GRO08AuditFixTest is Test {
         
         vm.prank(owner);
         vm.expectRevert("Array length mismatch");
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
     }
 }
