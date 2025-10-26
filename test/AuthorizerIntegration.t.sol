@@ -115,8 +115,9 @@ contract AuthorizerIntegrationTest is Test {
         vm.prank(buyer);
         presale.buyWithNativeVoucher{value: purchaseAmount}(beneficiary, voucher, signature);
         
-        // Second purchase with same voucher should fail (InvalidNonce since nonce incremented)
-        vm.expectRevert(Authorizer.InvalidNonce.selector);
+        // Second purchase with same voucher should fail
+        // GRO-19: In-contract replay protection catches this before Authorizer check
+        vm.expectRevert("Voucher already used in this contract");
         vm.prank(buyer);
         presale.buyWithNativeVoucher{value: purchaseAmount}(beneficiary, voucher, signature);
     }
