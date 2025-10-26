@@ -345,45 +345,53 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
-    function buyWithTokenVoucher(
-        address token,
-        uint256 amount,
-        address beneficiary,
-        Authorizer.Voucher calldata voucher,
-        bytes calldata signature
-    ) external nonReentrant whenNotPaused {
-        require(voucherSystemEnabled, "Voucher system not enabled");
-        require(address(authorizer) != address(0), "Authorizer not set");
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(amount > 0, "Invalid amount");
-        require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        require(voucher.buyer == msg.sender, "Only buyer can use voucher");
-        require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
-        require(voucher.paymentToken == token, "Invalid payment token");
-        
-        TokenPrice memory tokenPrice = tokenPrices[token];
-        require(tokenPrice.isActive, "Token not accepted");
-        
-        // Calculate USD amount for authorization
-        uint256 usdAmount = _convertToUsd(token, amount);
-        
-        // Authorize purchase with voucher
-        bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
-        require(authorized, "Voucher authorization failed");
-        
-        // Transfer tokens with deflationary token compatibility check
-        uint256 beforeBalance = IERC20(token).balanceOf(address(this));
-        IERC20(token).transferFrom(msg.sender, address(this), amount);
-        uint256 received = IERC20(token).balanceOf(address(this)) - beforeBalance;
-        require(received == amount, "Deflationary token not supported");
-        
-        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
-        _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
-    }
+    // ✅ AFTER (Fixed):
+function buyWithTokenVoucher(
+    address token,
+    uint256 amount,
+    address beneficiary,
+    Authorizer.Voucher calldata voucher,
+    bytes calldata signature
+) external nonReentrant whenNotPaused {
+    require(voucherSystemEnabled, "Voucher system not enabled");
+    require(address(authorizer) != address(0), "Authorizer not set");
+    require(beneficiary != address(0), "Invalid beneficiary");
+    require(amount > 0, "Invalid amount");
+    require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
+    require(presaleStartTime > 0, "Presale not started");
+    require(block.timestamp >= presaleStartTime, "Presale not started yet");
+    require(block.timestamp <= presaleEndTime, "Presale ended");
+    require(!presaleEnded, "Presale ended");
+    require(voucher.buyer == msg.sender, "Only buyer can use voucher");
+    require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
+    require(voucher.paymentToken == token, "Invalid payment token");
+    
+    TokenPrice memory tokenPrice = tokenPrices[token];
+    require(tokenPrice.isActive, "Token not accepted");
+    
+    // Calculate USD amount for authorization
+    uint256 usdAmount = _convertToUsd(token, amount);
+    
+    // Authorize purchase with voucher
+    bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
+    require(authorized, "Voucher authorization failed");
+    
+    // Use SafeERC20 with balance check
+    uint256 beforeBalance = IERC20(token).balanceOf(address(this));
+    IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+    uint256 afterBalance = IERC20(token).balanceOf(address(this));
+    uint256 received = afterBalance - beforeBalance;
+    
+    // Ensure full amount received (no deflationary tokens)
+    require(received == amount, "Deflationary token not supported");
+    
+    uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
+    
+    // Ensure token amount > 0
+    require(tokenAmount > 0, "Token amount must be greater than zero");
+    
+    _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
+}
     
     // ============ INTERNAL FUNCTIONS ============
     
@@ -391,7 +399,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Convert payment amount to USD value
         uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
 
-        // GRO-04: Enforce per-user purchase limit
+        // Enforce per-user purchase limit
         require(totalUsdPurchased[beneficiary] + usdValue <= maxTotalPurchasePerUser, "Exceeds per-user cap");
         
         // Track USD spent for analytics (usdValue already has 8 decimals)
