@@ -631,24 +631,40 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         TokenPrice memory tokenPrice = tokenPrices[token];
         require(tokenPrice.isActive, "Token not accepted");
         
-        // Calculate USD amount for authorization (8 decimals)
-        uint256 usdAmount = (amount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
+        // Transfer and calculate actual received amount
+        uint256 actualAmount = _transferAndCalculateActualAmount(token, amount);
+        
+        // Calculate USD amount based on actual received amount (8 decimals)
+        uint256 usdAmount = (actualAmount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
         require(usdAmount > 0, "Payment amount too small");
         
         // Authorize purchase with voucher
-        bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
-        require(authorized, "Voucher authorization failed");
+        require(authorizer.authorize(voucher, signature, token, usdAmount), "Voucher authorization failed");
         
-        // Calculate token amount BEFORE transferring payment tokens
-        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
+        // Calculate token amount based on actual received amount
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, actualAmount, beneficiary, usdAmount);
         
-        // Transfer tokens only after validating token amount > 0 (SafeERC20 handles USDT compatibility)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        
-        _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
+        _processVoucherPurchase(beneficiary, token, actualAmount, tokenAmount, voucher);
     }
     
     // ============ INTERNAL FUNCTIONS ============
+    
+    /// @notice Transfer tokens and calculate actual received amount (handles fee-on-transfer tokens)
+    /// @param token Token address to transfer
+    /// @param amount Amount to transfer
+    /// @return actualAmount Actual amount received after transfer
+    function _transferAndCalculateActualAmount(address token, uint256 amount) internal returns (uint256 actualAmount) {
+        // Record balance before transfer to detect fee-on-transfer tokens
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        
+        // Transfer tokens (SafeERC20 handles USDT compatibility)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        
+        // Calculate actual amount received (handles deflationary/fee-on-transfer tokens)
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        actualAmount = balanceAfter - balanceBefore;
+        require(actualAmount > 0, "No tokens received");
+    }
     
     function _ensurePresaleActive() internal view {
         bool mainPresaleActive = presaleStartTime > 0 &&
