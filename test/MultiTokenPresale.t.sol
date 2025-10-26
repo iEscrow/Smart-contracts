@@ -244,11 +244,11 @@ contract MultiTokenPresaleTest is Test {
         vm.prank(buyer1);
         presale.autoStartIEscrowPresale();
         
-        // Verify presale started
-        (bool started, bool ended,,,) = presale.getPresaleStatus();
+        // Verify escrow presale started
+        (bool started, bool ended,,,) = presale.getEscrowPresaleStatus();
         assertTrue(started);
         assertFalse(ended);
-        assertEq(presale.currentRound(), 1);
+        assertEq(presale.escrowCurrentRound(), 1);
     }
     
     function testCannotStartBeforeLaunchDate() public {
@@ -262,7 +262,7 @@ contract MultiTokenPresaleTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        vm.expectRevert("Presale not started");
+        vm.expectRevert("No presale active");
         vm.prank(buyer1);
         presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
     }
@@ -272,8 +272,8 @@ contract MultiTokenPresaleTest is Test {
     function testRound1Duration() public {
         _startPresale();
         
-        // Check we're in round 1
-        assertEq(presale.currentRound(), 1);
+        // Check we're in escrow round 1
+        assertEq(presale.escrowCurrentRound(), 1);
         
         // Warp to end of round 1
         vm.warp(block.timestamp + 23 days);
@@ -282,15 +282,15 @@ contract MultiTokenPresaleTest is Test {
         _makePurchase(buyer1, 0.001 ether, 0);
         
         // Should still be in round 1 (auto-advancement disabled)
-        assertEq(presale.currentRound(), 1);
+        assertEq(presale.escrowCurrentRound(), 1);
     }
     
     function testManualRoundAdvancement() public {
         _startPresale();
         
-        assertEq(presale.currentRound(), 1);
+        assertEq(presale.escrowCurrentRound(), 1);
         
-        // Owner can manually advance with new prices
+        // Owner can manually advance escrow presale with new prices
         address[] memory tokens = new address[](1);
         uint256[] memory prices = new uint256[](1);
         uint8[] memory decimalsArray = new uint8[](1);
@@ -302,9 +302,9 @@ contract MultiTokenPresaleTest is Test {
         activeArray[0] = true;
         
         vm.prank(owner);
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
         
-        assertEq(presale.currentRound(), 2);
+        assertEq(presale.escrowCurrentRound(), 2);
     }
 
     function testGovernanceExecutorFlow() public {
@@ -433,15 +433,15 @@ contract MultiTokenPresaleTest is Test {
         // Verify tokens allocated
         assertTrue(presale.totalPurchased(buyer1) > 0);
         
-        // Verify round 1 tracking
-        assertTrue(presale.round1TokensSold() > 0);
-        assertEq(presale.round2TokensSold(), 0);
+        // Verify escrow round 1 tracking
+        assertTrue(presale.escrowRound1TokensSold() > 0);
+        assertEq(presale.escrowRound2TokensSold(), 0);
     }
     
     function testSuccessfulPurchaseRound2() public {
         _startPresale();
         
-        // Move to round 2 with new prices
+        // Move escrow to round 2 with new prices
         address[] memory tokens = new address[](1);
         uint256[] memory prices = new uint256[](1);
         uint8[] memory decimalsArray = new uint8[](1);
@@ -453,12 +453,12 @@ contract MultiTokenPresaleTest is Test {
         activeArray[0] = true;
         
         vm.prank(owner);
-        presale.moveToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
         
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        // Verify round 2 tracking
-        assertTrue(presale.round2TokensSold() > 0);
+        // Verify escrow round 2 tracking
+        assertTrue(presale.escrowRound2TokensSold() > 0);
     }
     
     function testMultipleBuyers() public {
@@ -530,7 +530,7 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        vm.expectRevert("Presale not ended yet");
+        vm.expectRevert("No presale ended yet");
         vm.prank(buyer1);
         presale.claimTokens();
     }
@@ -541,10 +541,10 @@ contract MultiTokenPresaleTest is Test {
         
         uint256 purchasedTokens = presale.totalPurchased(buyer1);
         
-        // End presale
+        // End escrow presale
         vm.warp(block.timestamp + 34 days + 1);
         vm.prank(owner);
-        presale.endPresale();
+        presale.endEscrowPresale();
         
         // Claim tokens
         vm.prank(buyer1);
@@ -559,10 +559,10 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        // End and claim
+        // End escrow presale and claim
         vm.warp(block.timestamp + 34 days + 1);
         vm.prank(owner);
-        presale.endPresale();
+        presale.endEscrowPresale();
         
         vm.prank(buyer1);
         presale.claimTokens();
@@ -579,9 +579,9 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         
         vm.prank(owner);
-        presale.emergencyEndPresale();
+        presale.emergencyEndEscrowPresale();
         
-        (, bool ended,,,) = presale.getPresaleStatus();
+        (, bool ended,,,) = presale.getEscrowPresaleStatus();
         assertTrue(ended);
     }
     

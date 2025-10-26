@@ -292,7 +292,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(priceUSD > 0, "Invalid price");
         require(decimals <= 18, "Invalid decimals");
         // Prevent price changes during active rounds (both main and escrow presales)
-        require(currentRound == 0 && escrowCurrentRound == 0, "Cannot change prices during active round");
+        bool mainPresaleActive = presaleStartTime > 0 && !presaleEnded && block.timestamp <= presaleEndTime;
+        bool escrowPresaleActive = escrowPresaleStartTime > 0 && !escrowPresaleEnded && block.timestamp <= escrowPresaleEndTime;
+        require(!mainPresaleActive && !escrowPresaleActive, "Cannot change prices during active presale");
         
         tokenPrices[token] = TokenPrice({
             priceUSD: priceUSD,
@@ -304,7 +306,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit TokenStatusUpdated(token, isActive);
     }
     
-    /// @notice Set multiple token prices atomically (only when no round is active)
+    /// @notice Set multiple token prices atomically (only when no presale is active)
     function setTokenPrices(
         address[] calldata tokens,
         uint256[] calldata pricesUSD,
@@ -315,8 +317,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(tokens.length == decimalsArray.length, "Array length mismatch");
         require(tokens.length == activeArray.length, "Array length mismatch");
         require(tokens.length > 0, "Empty arrays");
-        // Prevent price changes during active rounds (both main and escrow presales)
-        require(currentRound == 0 && escrowCurrentRound == 0, "Cannot change prices during active round");
+        // Prevent price changes during active presales (both main and escrow presales)
+        bool mainPresaleActive = presaleStartTime > 0 && !presaleEnded && block.timestamp <= presaleEndTime;
+        bool escrowPresaleActive = escrowPresaleStartTime > 0 && !escrowPresaleEnded && block.timestamp <= escrowPresaleEndTime;
+        require(!mainPresaleActive && !escrowPresaleActive, "Cannot change prices during active presale");
         
         for (uint256 i = 0; i < tokens.length; i++) {
             require(pricesUSD[i] > 0, "Invalid price");
@@ -336,6 +340,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // Presale timing controls
     function startPresale(uint256 _duration) external onlyGovernance {
         require(presaleStartTime == 0, "Presale already started");
+        require(!presaleEnded, "Presale already ended - cannot restart");
         require(_duration == MAX_PRESALE_DURATION, "Duration must match schedule");
         require(
             presaleToken.balanceOf(address(this)) >= maxTokensToMint,
@@ -355,6 +360,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // Auto-start presale on November 11, 2025 - Anyone can trigger
     function autoStartIEscrowPresale() external {
         require(escrowPresaleStartTime == 0, "Escrow presale already started");
+        require(!escrowPresaleEnded, "Escrow presale already ended - cannot restart");
         require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
         
         // Verify contract has enough presale tokens (5B $ESCROW)
@@ -595,6 +601,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(authorized, "Voucher authorization failed");
         
         uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, paymentAmount, beneficiary, usdAmount);
+        require(tokenAmount > 0, "Token amount too small");
         _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
     }
     
@@ -643,6 +650,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // Calculate token amount based on actual received amount
         uint256 tokenAmount = _calculateTokenAmountForVoucher(token, actualAmount, beneficiary, usdAmount);
+        require(tokenAmount > 0, "Token amount too small");
         
         _processVoucherPurchase(beneficiary, token, actualAmount, tokenAmount, voucher);
     }
@@ -984,7 +992,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function canClaim() external view returns (bool) {
-        return presaleEnded || escrowPresaleEnded;
+        // Can claim if either presale has explicitly ended OR if time has expired
+        bool mainPresaleTimeExpired = presaleStartTime > 0 && block.timestamp > presaleEndTime;
+        bool escrowPresaleTimeExpired = escrowPresaleStartTime > 0 && block.timestamp > escrowPresaleEndTime;
+        
+        return presaleEnded || escrowPresaleEnded || mainPresaleTimeExpired || escrowPresaleTimeExpired;
     }
     
     // Get escrow presale status
