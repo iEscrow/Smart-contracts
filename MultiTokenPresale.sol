@@ -735,24 +735,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         }
     }
     
-    function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
-        TokenPrice memory price = tokenPrices[paymentToken];
-        require(price.isActive, "Token not accepted");
-        
-        // Convert payment amount to USD value
-        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
-        require(usdValue > 0, "Payment amount too small");
-
-        // Track USD spent for analytics (no limit enforced)
-        totalUsdPurchased[beneficiary] += usdValue * 1e8;
-        
-        // Calculate presale tokens (limit enforced at total token level in _processPurchase)
-        uint256 tokenAmount = (usdValue * presaleRate);
-        require(tokenAmount > 0, "Token amount too small");
-        
-        return tokenAmount;
-    }
-    
     /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
     /// @dev USD tracking is now handled in _processVoucherPurchase to avoid double counting
     function _calculateTokenAmountForVoucher(address /* paymentToken */, uint256 /* paymentAmount */, address /* beneficiary */, uint256 usdAmount) internal view returns (uint256) {
