@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "../EscrowTresury.sol";
+import "../EscrowMultiTreasury.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock Token", "MOCK") {
-        _mint(msg.sender, 10_000_000_000 * 1e18); // Mint 10B tokens for testing
+        _mint(msg.sender, 10_000_000_000 * 1e18);
     }
 }
 
@@ -20,7 +20,6 @@ contract FullSetupScript {
         // --------------------------
         // 2️⃣ Deploy EscrowMultiTreasury
         // --------------------------
-        // LP & Marketing test addresses (use your local accounts)
         address lp = 0x5f5868Bb7E708aAb9C25c80AEBFA0131735233af;
         address mkt = 0xa315b46cA80982278eD28A3496718B1524Df467b;
 
@@ -33,18 +32,15 @@ contract FullSetupScript {
         // --------------------------
         // 3️⃣ Fund the treasury
         // --------------------------
-        // Approve and transfer tokens to the treasury
         token.approve(address(escrow), 9_400_000_000 * 1e18);
         escrow.fund();
 
         // --------------------------
-        // 4️⃣ Set team beneficiaries
+        // 4️⃣ Set team beneficiaries (29 members)
         // --------------------------
-        // Initialize arrays for team addresses and allocations (now 29 members)
         address[] memory addrs = new address[](29);
         uint256[] memory amts = new uint256[](29);
 
-        // Team addresses
         addrs[0]  = 0x04435410a78192baAfa00c72C659aD3187a2C2cF;
         addrs[1]  = 0x9005132849bC9585A948269D96F23f56e5981A61;
         addrs[2]  = 0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74;
@@ -72,18 +68,17 @@ contract FullSetupScript {
         addrs[24] = 0x54920dEb99489F36AB7204F727E20B72fB391e7b;
         addrs[25] = 0x4C11b6D0d1aD06F95966372014097AE3411cE7b9;
         addrs[26] = 0x277cAebe8E2d2284752d75853Fe70aF00dE893ac;
-        addrs[27] = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d; 
-        addrs[28] = 0xCACEeBfD2E88ce3741dd45622cDf5D2f3166e8f5; 
+        addrs[27] = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d;
+        addrs[28] = 0xCACEeBfD2E88ce3741dd45622cDf5D2f3166e8f5;
 
-        // Allocations
         for (uint256 i = 0; i < 10; i++) {
             amts[i] = 10_000_000 * 1e18;
         }
         for (uint256 i = 10; i < 27; i++) {
             amts[i] = 50_000_000 * 1e18;
         }
-        amts[27] = 40_000_000 * 1e18; 
-        amts[28] = 10_000_000 * 1e18; 
+        amts[27] = 40_000_000 * 1e18;
+        amts[28] = 10_000_000 * 1e18;
 
         escrow.batchSetTeam(addrs, amts);
 
@@ -93,3 +88,4 @@ contract FullSetupScript {
         escrow.lock();
     }
 }
+
