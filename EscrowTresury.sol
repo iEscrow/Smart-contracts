@@ -10,8 +10,16 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 /**
  * @title EscrowMultiTreasury
  * @author iEscrow Team
- * @notice Treasury for Team (1%), LP (5%), and Marketing (3.4%) allocations
+ * @notice Vesting treasury for Team (1%), LP (5%), and Marketing (3.4%) allocations
  * @dev Team: 3yr cliff + 5 milestones (20% per 6mo) | LP: instant | Marketing: 4 milestones (25% per 6mo)
+ * 
+ * Security features:
+ * - ReentrancyGuard on all claim functions
+ * - Pausable for emergency stops
+ * - SafeERC20 for token transfers
+ * - Immutable token, LP, and marketing addresses
+ * - Single funding mechanism
+ * - Lock mechanism to prevent allocation changes post-deployment
  */
 contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -41,19 +49,19 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
 
     IERC20 public immutable token;
     uint256 public immutable deployTime;
+    address public immutable lpRecipient;
+    address public immutable mktRecipient;
 
-    // Flags: bit0=funded | bit1=locked | bit2=lpClaimed
+    // Packed flags: bit0=funded | bit1=locked | bit2=lpClaimed
     uint8 private _flags;
 
-    // Team
+    // Team vesting
     mapping(address => uint256) public teamAlloc;
     mapping(address => uint256) public teamClaimed;
     address[] private _teamList;
     uint256 public teamTotal;
 
-    // LP & Marketing (single recipient each)
-    address public immutable lpRecipient;
-    address public immutable mktRecipient;
+    // Marketing vesting
     uint256 public mktClaimed;
     uint8 public mktLastMilestone;
 
@@ -62,10 +70,10 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
     // ════════════════════════════════════════════════════════════════════════════════
 
     event Funded(uint256 amount);
-    event TeamSet(address indexed who, uint256 amount);
-    event TeamRemoved(address indexed who, uint256 amount);
+    event TeamSet(address indexed beneficiary, uint256 amount);
+    event TeamRemoved(address indexed beneficiary, uint256 amount);
     event Locked();
-    event Claimed(address indexed who, uint256 amount, uint8 milestone);
+    event Claimed(address indexed recipient, uint256 amount, string category);
 
     // ════════════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -80,21 +88,18 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
     error ExceedsLimit();
     error AlreadyExists();
     error NotFound();
-    error NoTokens();
+    error NoTokensAvailable();
     error Unauthorized();
+    error ArrayLengthMismatch();
 
     // ════════════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ════════════════════════════════════════════════════════════════════════════════
 
-    constructor(
-        address _token,
-        address _lp,
-        address _mkt
-    ) Ownable(msg.sender) {
-        if (_token == address(0) || _lp == address(0) || _mkt == address(0)) 
+    constructor(address _token, address _lp, address _mkt) Ownable(msg.sender) {
+        if (_token == address(0) || _lp == address(0) || _mkt == address(0)) {
             revert ZeroAddress();
-
+        }
         token = IERC20(_token);
         lpRecipient = _lp;
         mktRecipient = _mkt;
@@ -102,10 +107,10 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ════════════════════════════════════════════════════════════════════════════════
-    // ADMIN
+    // ADMIN FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════════════
 
-    /// @notice Fund treasury (once)
+    /// @notice Fund treasury with tokens (one-time operation)
     function fund() external onlyOwner {
         if (_isFunded()) revert AlreadyFunded();
         token.safeTransferFrom(msg.sender, address(this), TOTAL_ALLOC);
@@ -113,71 +118,73 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
         emit Funded(TOTAL_ALLOC);
     }
 
-    /// @notice Set team beneficiary
-    function setTeam(address who, uint256 amt) external onlyOwner {
+    /// @notice Set individual team beneficiary allocation
+    function setTeam(address beneficiary, uint256 amount) external onlyOwner {
         if (!_isFunded()) revert NotFunded();
         if (_isLocked()) revert AlreadyLocked();
-        if (who == address(0)) revert ZeroAddress();
-        if (amt == 0) revert ZeroAmount();
-        if (teamAlloc[who] > 0) revert AlreadyExists();
-        if (teamTotal + amt > TEAM_ALLOC) revert ExceedsLimit();
+        if (beneficiary == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        if (teamAlloc[beneficiary] > 0) revert AlreadyExists();
+        if (teamTotal + amount > TEAM_ALLOC) revert ExceedsLimit();
 
-        teamAlloc[who] = amt;
-        _teamList.push(who);
-        teamTotal += amt;
-        emit TeamSet(who, amt);
+        teamAlloc[beneficiary] = amount;
+        _teamList.push(beneficiary);
+        teamTotal += amount;
+        emit TeamSet(beneficiary, amount);
     }
 
-    /// @notice Batch set team (gas efficient)
-    function batchSetTeam(address[] calldata addrs, uint256[] calldata amts) external onlyOwner {
+    /// @notice Batch set team beneficiaries (gas efficient)
+    function batchSetTeam(address[] calldata beneficiaries, uint256[] calldata amounts) external onlyOwner {
         if (!_isFunded()) revert NotFunded();
         if (_isLocked()) revert AlreadyLocked();
-        uint256 len = addrs.length;
-        if (len != amts.length || len == 0) revert ZeroAmount();
+        
+        uint256 len = beneficiaries.length;
+        if (len != amounts.length || len == 0) revert ArrayLengthMismatch();
 
         uint256 total;
         for (uint256 i; i < len;) {
-            if (addrs[i] == address(0)) revert ZeroAddress();
-            if (amts[i] == 0) revert ZeroAmount();
-            if (teamAlloc[addrs[i]] > 0) revert AlreadyExists();
-            total += amts[i];
+            if (beneficiaries[i] == address(0)) revert ZeroAddress();
+            if (amounts[i] == 0) revert ZeroAmount();
+            if (teamAlloc[beneficiaries[i]] > 0) revert AlreadyExists();
+            total += amounts[i];
             unchecked { ++i; }
         }
 
         if (teamTotal + total > TEAM_ALLOC) revert ExceedsLimit();
 
         for (uint256 i; i < len;) {
-            teamAlloc[addrs[i]] = amts[i];
-            _teamList.push(addrs[i]);
-            emit TeamSet(addrs[i], amts[i]);
+            teamAlloc[beneficiaries[i]] = amounts[i];
+            _teamList.push(beneficiaries[i]);
+            emit TeamSet(beneficiaries[i], amounts[i]);
             unchecked { ++i; }
         }
         teamTotal += total;
     }
 
-    /// @notice Remove team beneficiary (before lock)
-    function removeTeam(address who) external onlyOwner {
+    /// @notice Remove team beneficiary (only before lock)
+    function removeTeam(address beneficiary) external onlyOwner {
         if (_isLocked()) revert AlreadyLocked();
-        uint256 amt = teamAlloc[who];
-        if (amt == 0) revert NotFound();
+        
+        uint256 amount = teamAlloc[beneficiary];
+        if (amount == 0) revert NotFound();
 
-        delete teamAlloc[who];
-        teamTotal -= amt;
+        delete teamAlloc[beneficiary];
+        teamTotal -= amount;
 
-        // Swap & pop
+        // Remove from array using swap and pop
         uint256 len = _teamList.length;
         for (uint256 i; i < len;) {
-            if (_teamList[i] == who) {
+            if (_teamList[i] == beneficiary) {
                 _teamList[i] = _teamList[len - 1];
                 _teamList.pop();
                 break;
             }
             unchecked { ++i; }
         }
-        emit TeamRemoved(who, amt);
+        emit TeamRemoved(beneficiary, amount);
     }
 
-    /// @notice Lock allocations
+    /// @notice Lock allocations (irreversible)
     function lock() external onlyOwner {
         if (!_isFunded()) revert NotFunded();
         if (_isLocked()) revert AlreadyLocked();
@@ -186,193 +193,191 @@ contract EscrowMultiTreasury is Ownable, ReentrancyGuard, Pausable {
         emit Locked();
     }
 
-    /// @notice Emergency pause
-    function pause() external onlyOwner { _pause(); }
+    /// @notice Emergency pause all claims
+    function pause() external onlyOwner { 
+        _pause(); 
+    }
 
-    /// @notice Unpause
-    function unpause() external onlyOwner { _unpause(); }
+    /// @notice Resume claims
+    function unpause() external onlyOwner { 
+        _unpause(); 
+    }
 
     // ════════════════════════════════════════════════════════════════════════════════
-    // CLAIMING
+    // CLAIM FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════════════
 
-    /// @notice Claim team tokens (self only)
+    /// @notice Claim vested team tokens (beneficiary only)
     function claimTeam() external nonReentrant whenNotPaused {
         if (!_isFunded()) revert NotFunded();
         if (!_isLocked()) revert NotLocked();
         
-        uint256 amt = teamAlloc[msg.sender];
-        if (amt == 0) revert NotFound();
+        uint256 allocated = teamAlloc[msg.sender];
+        if (allocated == 0) revert NotFound();
 
-        uint256 claimable = _teamClaimable(msg.sender);
-        if (claimable == 0) revert NoTokens();
+        uint256 claimable = _calculateTeamClaimable(msg.sender);
+        if (claimable == 0) revert NoTokensAvailable();
 
         teamClaimed[msg.sender] += claimable;
         token.safeTransfer(msg.sender, claimable);
-        emit Claimed(msg.sender, claimable, _teamMilestone());
+        emit Claimed(msg.sender, claimable, "Team");
     }
 
-    /// @notice Claim LP tokens (recipient only, once)
+    /// @notice Claim LP tokens (instant, one-time)
     function claimLP() external nonReentrant whenNotPaused {
         if (!_isFunded()) revert NotFunded();
         if (msg.sender != lpRecipient) revert Unauthorized();
-        if (_flags & 0x04 != 0) revert NoTokens(); // Already claimed
+        if (_flags & 0x04 != 0) revert NoTokensAvailable();
 
         _flags |= 0x04;
         token.safeTransfer(lpRecipient, LP_ALLOC);
-        emit Claimed(lpRecipient, LP_ALLOC, 0);
+        emit Claimed(lpRecipient, LP_ALLOC, "LP");
     }
 
-    /// @notice Claim marketing tokens (recipient only)
+    /// @notice Claim vested marketing tokens
     function claimMkt() external nonReentrant whenNotPaused {
         if (!_isFunded()) revert NotFunded();
         if (msg.sender != mktRecipient) revert Unauthorized();
 
-        uint8 curr = _mktMilestone();
-        if (curr <= mktLastMilestone) revert NoTokens();
+        uint8 currentMilestone = _calculateMktMilestone();
+        if (currentMilestone <= mktLastMilestone) revert NoTokensAvailable();
 
-        uint256 claimable = ((curr - mktLastMilestone) * MKT_ALLOC * MKT_PCT) / BP;
-        if (mktClaimed + claimable > MKT_ALLOC) claimable = MKT_ALLOC - mktClaimed;
-        if (claimable == 0) revert NoTokens();
+        uint256 claimable = ((currentMilestone - mktLastMilestone) * MKT_ALLOC * MKT_PCT) / BP;
+        if (mktClaimed + claimable > MKT_ALLOC) {
+            claimable = MKT_ALLOC - mktClaimed;
+        }
+        if (claimable == 0) revert NoTokensAvailable();
 
         mktClaimed += claimable;
-        mktLastMilestone = curr;
+        mktLastMilestone = currentMilestone;
         token.safeTransfer(mktRecipient, claimable);
-        emit Claimed(mktRecipient, claimable, curr);
+        emit Claimed(mktRecipient, claimable, "Marketing");
     }
 
     // ════════════════════════════════════════════════════════════════════════════════
-    // VIEWS
+    // VIEW FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════════════
 
-    /// @notice Get team claimable amount
-    function teamClaimable(address who) external view returns (uint256) {
-        return _teamClaimable(who);
+    /// @notice Get claimable amount for team member
+    function teamClaimable(address beneficiary) external view returns (uint256) {
+        return _calculateTeamClaimable(beneficiary);
     }
 
-    /// @notice Get team info
-    function teamInfo(address who) external view returns (
+    /// @notice Get comprehensive team member info
+    function teamInfo(address beneficiary) external view returns (
         uint256 allocated,
         uint256 vested,
         uint256 claimed,
         uint256 claimable,
         uint8 milestone
     ) {
-        allocated = teamAlloc[who];
+        allocated = teamAlloc[beneficiary];
         if (allocated == 0) return (0, 0, 0, 0, 0);
         
-        claimed = teamClaimed[who];
-        vested = _teamVested(who);
+        claimed = teamClaimed[beneficiary];
+        vested = _calculateTeamVested(beneficiary);
         claimable = vested > claimed ? vested - claimed : 0;
-        milestone = _teamMilestone();
+        milestone = _calculateTeamMilestone();
     }
 
-    /// @notice Get marketing claimable
+    /// @notice Get claimable marketing tokens
     function mktClaimable() external view returns (uint256) {
-        uint8 curr = _mktMilestone();
-        if (curr <= mktLastMilestone) return 0;
+        uint8 current = _calculateMktMilestone();
+        if (current <= mktLastMilestone) return 0;
         
-        uint256 amt = ((curr - mktLastMilestone) * MKT_ALLOC * MKT_PCT) / BP;
-        return mktClaimed + amt > MKT_ALLOC ? MKT_ALLOC - mktClaimed : amt;
+        uint256 amount = ((current - mktLastMilestone) * MKT_ALLOC * MKT_PCT) / BP;
+        return mktClaimed + amount > MKT_ALLOC ? MKT_ALLOC - mktClaimed : amount;
     }
 
-    /// @notice Get treasury stats
+    /// @notice Get treasury statistics
     function stats() external view returns (
         uint256 balance,
         uint256 teamCount,
         bool funded,
-        bool locked
+        bool locked,
+        bool lpClaimed
     ) {
         return (
             token.balanceOf(address(this)),
             _teamList.length,
             _isFunded(),
-            _isLocked()
+            _isLocked(),
+            _flags & 0x04 != 0
         );
     }
 
-    /// @notice Get all team beneficiaries
+    /// @notice Get all team beneficiaries and their allocations
     function allTeam() external view returns (
-        address[] memory addrs,
-        uint256[] memory allocs,
+        address[] memory beneficiaries,
+        uint256[] memory allocations,
         uint256[] memory claimed
     ) {
         uint256 len = _teamList.length;
-        addrs = new address[](len);
-        allocs = new uint256[](len);
+        beneficiaries = new address[](len);
+        allocations = new uint256[](len);
         claimed = new uint256[](len);
 
         for (uint256 i; i < len;) {
-            addrs[i] = _teamList[i];
-            allocs[i] = teamAlloc[_teamList[i]];
+            beneficiaries[i] = _teamList[i];
+            allocations[i] = teamAlloc[_teamList[i]];
             claimed[i] = teamClaimed[_teamList[i]];
             unchecked { ++i; }
         }
     }
 
-    /// @notice Get next unlock times
+    /// @notice Get next unlock timestamps
     function nextUnlock() external view returns (uint256 teamNext, uint256 mktNext) {
-        uint8 tm = _teamMilestone();
-        if (tm == 0) {
-            // Before cliff, next unlock is at cliff
+        uint8 teamMilestone = _calculateTeamMilestone();
+        
+        if (teamMilestone == 0) {
             teamNext = deployTime + TEAM_CLIFF;
-        } else if (tm < TEAM_MILESTONES) {
-            // After cliff, next unlock is at cliff + (current milestone * interval)
-            teamNext = deployTime + TEAM_CLIFF + (tm * TEAM_INTERVAL);
-        } else {
-            teamNext = 0; // No more team unlocks
+        } else if (teamMilestone < TEAM_MILESTONES) {
+            teamNext = deployTime + TEAM_CLIFF + (teamMilestone * TEAM_INTERVAL);
         }
 
-        uint8 mm = _mktMilestone();
-        if (mm < MKT_MILESTONES) {
-            // Next marketing unlock is at current milestone * interval
-            mktNext = deployTime + (mm * MKT_INTERVAL);
-        } else {
-            mktNext = 0; // No more marketing unlocks
+        uint8 mktMilestone = _calculateMktMilestone();
+        if (mktMilestone < MKT_MILESTONES) {
+            mktNext = deployTime + (mktMilestone * MKT_INTERVAL);
         }
     }
 
     // ════════════════════════════════════════════════════════════════════════════════
-    // INTERNAL
+    // INTERNAL HELPERS
     // ════════════════════════════════════════════════════════════════════════════════
 
-    function _teamVested(address who) internal view returns (uint256) {
-        uint256 alloc = teamAlloc[who];
-        if (alloc == 0) return 0;
+    function _calculateTeamVested(address beneficiary) internal view returns (uint256) {
+        uint256 allocated = teamAlloc[beneficiary];
+        if (allocated == 0) return 0;
 
-        uint8 m = _teamMilestone();
-        if (m == 0) return 0;
+        uint8 milestone = _calculateTeamMilestone();
+        if (milestone == 0) return 0;
 
-        return (alloc * m * TEAM_PCT) / BP;
+        return (allocated * milestone * TEAM_PCT) / BP;
     }
 
-    function _teamClaimable(address who) internal view returns (uint256) {
-        uint256 vested = _teamVested(who);
-        uint256 claimed = teamClaimed[who];
+    function _calculateTeamClaimable(address beneficiary) internal view returns (uint256) {
+        uint256 vested = _calculateTeamVested(beneficiary);
+        uint256 claimed = teamClaimed[beneficiary];
         return vested > claimed ? vested - claimed : 0;
     }
 
-    function _teamMilestone() internal view returns (uint8) {
-        uint256 unlock = deployTime + TEAM_CLIFF;
-        if (block.timestamp < unlock) return 0;
+    function _calculateTeamMilestone() internal view returns (uint8) {
+        uint256 unlockTime = deployTime + TEAM_CLIFF;
+        if (block.timestamp < unlockTime) return 0;
         
-        // At exactly unlock time, we're at milestone 1
-        if (block.timestamp == unlock) return 1;
-        // After unlock, calculate milestones based on intervals passed
-        uint256 elapsed = block.timestamp - unlock;
-        // Milestone 1 at unlock, milestone 2 at unlock + interval, etc.
-        uint256 m = (elapsed / TEAM_INTERVAL) + 1;
-        return m > TEAM_MILESTONES ? uint8(TEAM_MILESTONES) : uint8(m);
+        uint256 elapsed = block.timestamp - unlockTime;
+        uint256 milestone = (elapsed / TEAM_INTERVAL) + 1;
+        return milestone > TEAM_MILESTONES ? uint8(TEAM_MILESTONES) : uint8(milestone);
     }
 
-    function _mktMilestone() internal view returns (uint8) {
+    function _calculateMktMilestone() internal view returns (uint8) {
         if (block.timestamp < deployTime) return 0;
 
         uint256 elapsed = block.timestamp - deployTime;
         if (elapsed < MKT_INTERVAL) return 1;
 
-        uint256 m = (elapsed / MKT_INTERVAL) + 1;
-        return m > MKT_MILESTONES ? uint8(MKT_MILESTONES) : uint8(m);
+        uint256 milestone = (elapsed / MKT_INTERVAL) + 1;
+        return milestone > MKT_MILESTONES ? uint8(MKT_MILESTONES) : uint8(milestone);
     }
 
     function _isFunded() internal view returns (bool) {
