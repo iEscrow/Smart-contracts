@@ -40,9 +40,9 @@ contract FullSetupScript {
         // --------------------------
         // 4️⃣ Set team beneficiaries
         // --------------------------
-        // Initialize arrays for team addresses and allocations
-        address[] memory addrs = new address[](28);
-        uint256[] memory amts = new uint256[](28);
+        // Initialize arrays for team addresses and allocations (now 29 members)
+        address[] memory addrs = new address[](29);
+        uint256[] memory amts = new uint256[](29);
 
         // Team addresses
         addrs[0]  = 0x04435410a78192baAfa00c72C659aD3187a2C2cF;
@@ -72,15 +72,18 @@ contract FullSetupScript {
         addrs[24] = 0x54920dEb99489F36AB7204F727E20B72fB391e7b;
         addrs[25] = 0x4C11b6D0d1aD06F95966372014097AE3411cE7b9;
         addrs[26] = 0x277cAebe8E2d2284752d75853Fe70aF00dE893ac;
-        addrs[27] = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d;
+        addrs[27] = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d; 
+        addrs[28] = 0xCACEeBfD2E88ce3741dd45622cDf5D2f3166e8f5; 
 
         // Allocations
         for (uint256 i = 0; i < 10; i++) {
             amts[i] = 10_000_000 * 1e18;
         }
-        for (uint256 i = 10; i < 28; i++) {
+        for (uint256 i = 10; i < 27; i++) {
             amts[i] = 50_000_000 * 1e18;
         }
+        amts[27] = 40_000_000 * 1e18; 
+        amts[28] = 10_000_000 * 1e18; 
 
         escrow.batchSetTeam(addrs, amts);
 
