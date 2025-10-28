@@ -41,8 +41,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
-    // mapping(address => uint256) public maxPurchasePerToken;
-    uint256 public maxTotalPurchasePerUser; // Total USD value limit per user
     
     // User tracking
     mapping(address => mapping(address => uint256)) public purchasedAmounts; // user => token => amount
@@ -179,8 +177,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             decimals: 6
         });
         
-        // Set total USD limit per user to $10,000 (all tokens combined)
-        maxTotalPurchasePerUser = 10000 * 1e8; // $10,000 total
     }
     
     // ============ PRICE MANAGEMENT ============
@@ -399,9 +395,6 @@ function buyWithTokenVoucher(
         // Convert payment amount to USD value
         uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
 
-        // Enforce per-user purchase limit
-        require(totalUsdPurchased[beneficiary] + usdValue <= maxTotalPurchasePerUser, "Exceeds per-user cap");
-        
         // Track USD spent for analytics (usdValue already has 8 decimals)
         totalUsdPurchased[beneficiary] += usdValue;
         
@@ -409,18 +402,14 @@ function buyWithTokenVoucher(
         return (usdValue * presaleRate) / 1e8;
     }
     
-    /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
-    function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
-        // GRO-04: Enforce per-user purchase limit
-        require(totalUsdPurchased[beneficiary] + usdAmount <= maxTotalPurchasePerUser, "Exceeds per-user cap");
-        
-        // Track USD spent for analytics (usdAmount already has 8 decimals)
-        totalUsdPurchased[beneficiary] += usdAmount;
-        
-        // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
-        return (usdAmount * presaleRate) / 1e8;
-    }
+   function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
+    // Track USD spent for analytics (usdAmount already has 8 decimals)
+    totalUsdPurchased[beneficiary] += usdAmount; // Keep for tracking/analytics
     
+    // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
+    // Only limit: total token supply (maxTokensToMint) enforced in _processPurchase
+    return (usdAmount * presaleRate) / 1e8;
+}
     function _processPurchase(
         address beneficiary,
         address paymentToken,
@@ -748,55 +737,46 @@ function buyWithTokenVoucher(
         address[] memory tokens,
         string[] memory symbols,
         uint256[] memory prices,
-        uint256[] memory maxPurchases,
         bool[] memory active
     ) {
         tokens = new address[](7);
         symbols = new string[](7);
         prices = new uint256[](7);
-        maxPurchases = new uint256[](7);
         active = new bool[](7);
         
         tokens[0] = NATIVE_ADDRESS;
         symbols[0] = "ETH";
         prices[0] = tokenPrices[NATIVE_ADDRESS].priceUSD;
-        maxPurchases[0] = maxTotalPurchasePerUser;
         active[0] = tokenPrices[NATIVE_ADDRESS].isActive;
         
         tokens[1] = WETH_ADDRESS;
         symbols[1] = "WETH";
         prices[1] = tokenPrices[WETH_ADDRESS].priceUSD;
-        maxPurchases[1] = maxTotalPurchasePerUser;
         active[1] = tokenPrices[WETH_ADDRESS].isActive;
         
         tokens[2] = WBNB_ADDRESS;
         symbols[2] = "WBNB";
         prices[2] = tokenPrices[WBNB_ADDRESS].priceUSD;
-        maxPurchases[2] = maxTotalPurchasePerUser;
         active[2] = tokenPrices[WBNB_ADDRESS].isActive;
         
         tokens[3] = LINK_ADDRESS;
         symbols[3] = "LINK";
         prices[3] = tokenPrices[LINK_ADDRESS].priceUSD;
-        maxPurchases[3] = maxTotalPurchasePerUser;
         active[3] = tokenPrices[LINK_ADDRESS].isActive;
         
         tokens[4] = WBTC_ADDRESS;
         symbols[4] = "WBTC";
         prices[4] = tokenPrices[WBTC_ADDRESS].priceUSD;
-        maxPurchases[4] = maxTotalPurchasePerUser;
         active[4] = tokenPrices[WBTC_ADDRESS].isActive;
         
         tokens[5] = USDC_ADDRESS;
         symbols[5] = "USDC";
         prices[5] = tokenPrices[USDC_ADDRESS].priceUSD;
-        maxPurchases[5] = maxTotalPurchasePerUser;
         active[5] = tokenPrices[USDC_ADDRESS].isActive;
         
         tokens[6] = USDT_ADDRESS;
         symbols[6] = "USDT";
         prices[6] = tokenPrices[USDT_ADDRESS].priceUSD;
-        maxPurchases[6] = maxTotalPurchasePerUser;
         active[6] = tokenPrices[USDT_ADDRESS].isActive;
     }
     
