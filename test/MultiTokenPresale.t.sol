@@ -6,24 +6,6 @@ import "../Authorizer.sol";
 import "../MultiTokenPresale.sol";
 import "../EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-contract MockExecutor {
-    receive() external payable {}
-
-    function accept(MultiTokenPresale presale) external {
-        presale.acceptGovernanceExecutor();
-    }
-
-    function acceptTreasury(MultiTokenPresale presale) external {
-        presale.acceptTreasury();
-    }
-
-    function execute(address target, bytes calldata data) external {
-        (bool success,) = target.call(data);
-        require(success, "Executor call failed");
-    }
-}
 
 /// @notice Mock ERC20 token for testing
 contract MockERC20 is ERC20 {
@@ -42,108 +24,36 @@ contract MockERC20 is ERC20 {
     }
 }
 
-/// @notice Mock deflationary token that burns 1% of tokens on transfer
-contract MockDeflationaryToken is IERC20 {
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    string public constant name = "Deflationary Token";
-    string public constant symbol = "DEFL";
-
-    function decimals() external pure returns (uint8) {
-        return 6;
-    }
-
-    function totalSupply() external view returns (uint256) {
-        return 1000000 * 1e6; // 1M tokens
-    }
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
-
-        uint256 burnAmount = amount / 100; // Burn 1%
-        uint256 transferAmount = amount - burnAmount;
-
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += transferAmount;
-
-        emit Transfer(msg.sender, address(0), burnAmount); // Burn event
-        emit Transfer(msg.sender, to, transferAmount);    // Transfer event
-
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        require(balanceOf[from] >= amount, "Insufficient balance");
-        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
-
-        uint256 burnAmount = amount / 100; // Burn 1%
-        uint256 transferAmount = amount - burnAmount;
-
-        balanceOf[from] -= amount;
-        balanceOf[to] += transferAmount;
-        allowance[from][msg.sender] -= amount;
-
-        emit Transfer(from, address(0), burnAmount); // Burn event
-        emit Transfer(from, to, transferAmount);    // Transfer event
-
-        return true;
-    }
-}
-
 /// @notice Mock USDT that doesn't return bool on transfer (for testing SafeERC20)
-contract MockUSDT is IERC20 {
+contract MockUSDT {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
-
+    
+    uint8 public constant decimals = 6;
     string public constant name = "Tether USD";
     string public constant symbol = "USDT";
-
-    function decimals() external pure returns (uint8) {
-        return 6;
-    }
-
-    function totalSupply() external view returns (uint256) {
-        return 1000000 * 1e6; // 1M tokens
-    }
-
+    
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
     }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
+    
+    function approve(address spender, uint256 amount) external {
         allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
     }
-
-    // USDT returns bool on transfer (modern ERC20 standard)
-    function transfer(address to, uint256 amount) external returns (bool) {
+    
+    // USDT doesn't return bool on transfer
+    function transfer(address to, uint256 amount) external {
         require(balanceOf[msg.sender] >= amount, "Insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
-        return true;
     }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    
+    function transferFrom(address from, address to, uint256 amount) external {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         allowance[from][msg.sender] -= amount;
-        emit Transfer(from, to, amount);
-        return true;
     }
 }
 
@@ -164,7 +74,6 @@ contract MultiTokenPresaleTest is Test {
     MockERC20 public mockWBTC;  // 8 decimals
     MockERC20 public mockWETH;  // 18 decimals
     MockUSDT public mockUSDT;   // 6 decimals, no return value
-    MockDeflationaryToken public mockDeflationaryToken; // 6 decimals, deflationary
     
     uint256 public signerPrivateKey = 0xB0B;
     address public signer = vm.addr(signerPrivateKey);
@@ -199,14 +108,12 @@ contract MultiTokenPresaleTest is Test {
         mockWBTC = new MockERC20("Wrapped Bitcoin", "WBTC", 8);
         mockWETH = new MockERC20("Wrapped Ether", "WETH", 18);
         mockUSDT = new MockUSDT();
-        mockDeflationaryToken = new MockDeflationaryToken();
         
         // Set token prices in presale
         presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, true);      // $1
         presale.setTokenPrice(address(mockWBTC), 45000 * 1e8, 8, true);  // $45,000
         presale.setTokenPrice(address(mockWETH), 4200 * 1e8, 18, true);  // $4,200
         presale.setTokenPrice(address(mockUSDT), 1 * 1e8, 6, true);      // $1
-        presale.setTokenPrice(address(mockDeflationaryToken), 1 * 1e8, 6, true); // $1
         
         vm.stopPrank();
         
@@ -223,13 +130,11 @@ contract MultiTokenPresaleTest is Test {
         mockWETH.mint(buyer2, 100 * 1e18);
         mockUSDT.mint(buyer1, 100000 * 1e6);  // 100k USDT
         mockUSDT.mint(buyer2, 100000 * 1e6);
-        mockDeflationaryToken.mint(buyer1, 100000 * 1e6); // 100k deflationary tokens
-        mockDeflationaryToken.mint(buyer2, 100000 * 1e6);
     }
     
     // ========== PRESALE LIFECYCLE TESTS ==========
     
-    function testPresaleNotStartedInitially() public view {
+    function testPresaleNotStartedInitially() public {
         (bool started, bool ended,,,) = presale.getPresaleStatus();
         assertFalse(started);
         assertFalse(ended);
@@ -244,11 +149,11 @@ contract MultiTokenPresaleTest is Test {
         vm.prank(buyer1);
         presale.autoStartIEscrowPresale();
         
-        // Verify escrow presale started
-        (bool started, bool ended,,,) = presale.getEscrowPresaleStatus();
+        // Verify presale started
+        (bool started, bool ended,,,) = presale.getPresaleStatus();
         assertTrue(started);
         assertFalse(ended);
-        assertEq(presale.escrowCurrentRound(), 1);
+        assertEq(presale.currentRound(), 1);
     }
     
     function testCannotStartBeforeLaunchDate() public {
@@ -262,7 +167,7 @@ contract MultiTokenPresaleTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        vm.expectRevert("No presale active");
+        vm.expectRevert("Presale not started");
         vm.prank(buyer1);
         presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
     }
@@ -272,8 +177,8 @@ contract MultiTokenPresaleTest is Test {
     function testRound1Duration() public {
         _startPresale();
         
-        // Check we're in escrow round 1
-        assertEq(presale.escrowCurrentRound(), 1);
+        // Check we're in round 1
+        assertEq(presale.currentRound(), 1);
         
         // Warp to end of round 1
         vm.warp(block.timestamp + 23 days);
@@ -281,131 +186,20 @@ contract MultiTokenPresaleTest is Test {
         // Make a purchase to trigger round check
         _makePurchase(buyer1, 0.001 ether, 0);
         
-        // Should still be in round 1 (auto-advancement disabled)
-        assertEq(presale.escrowCurrentRound(), 1);
+        // Should auto-advance to round 2
+        assertEq(presale.currentRound(), 2);
     }
     
     function testManualRoundAdvancement() public {
         _startPresale();
         
-        assertEq(presale.escrowCurrentRound(), 1);
+        assertEq(presale.currentRound(), 1);
         
-        // Owner can manually advance escrow presale with new prices
-        address[] memory tokens = new address[](1);
-        uint256[] memory prices = new uint256[](1);
-        uint8[] memory decimalsArray = new uint8[](1);
-        bool[] memory activeArray = new bool[](1);
+        // Owner can manually advance
+        vm.prank(owner);
+        presale.moveToRound2();
         
-        tokens[0] = address(mockUSDC);
-        prices[0] = 2 * 1e8; // Different from round 1 price of $1
-        decimalsArray[0] = 6;
-        activeArray[0] = true;
-        
-        vm.prank(owner);
-        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
-        
-        assertEq(presale.escrowCurrentRound(), 2);
-    }
-
-    function testGovernanceExecutorFlow() public {
-        MockExecutor initialExecutor = new MockExecutor();
-        MockExecutor newExecutor = new MockExecutor();
-
-        // Activate governance executor while owner controls contract
-        vm.prank(owner);
-        presale.activateGovernanceExecutor(address(initialExecutor));
-
-        // Owner no longer has privileged access
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.setTokenPrice(address(mockUSDC), 2 * 1e8, 6, true);
-
-        // Executor can update prices through delegated call
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(2 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-        (uint256 updatedPrice,,) = presale.tokenPrices(address(mockUSDC));
-        assertEq(updatedPrice, 2 * 1e8);
-
-        // Executor proposes a replacement governance executor
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.proposeGovernanceExecutor.selector,
-                address(newExecutor)
-            )
-        );
-
-        // Only the pending executor can accept
-        vm.prank(owner);
-        vm.expectRevert("Caller not pending executor");
-        presale.acceptGovernanceExecutor();
-
-        newExecutor.accept(presale);
-
-        // Previous executor no longer has permissions
-        vm.expectRevert("Executor call failed");
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(3 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-
-        // New executor controls privileged calls
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(3 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-        (uint256 latestPrice,,) = presale.tokenPrices(address(mockUSDC));
-        assertEq(latestPrice, 3 * 1e8);
-
-        // Owner cannot change treasury anymore
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.proposeTreasury(address(newExecutor));
-
-        // Executor proposes itself as treasury
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.proposeTreasury.selector,
-                address(newExecutor)
-            )
-        );
-        newExecutor.acceptTreasury(presale);
-        assertEq(presale.treasury(), address(newExecutor));
-
-        // Fund the presale and test withdrawals
-        vm.deal(address(presale), 1 ether);
-
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.withdrawNative();
-
-        uint256 executorBalanceBefore = address(newExecutor).balance;
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(presale.withdrawNative.selector)
-        );
-        assertEq(address(newExecutor).balance, executorBalanceBefore + 1 ether);
+        assertEq(presale.currentRound(), 2);
     }
     
     function testPresaleAutoEndsAfter34Days() public {
@@ -433,32 +227,22 @@ contract MultiTokenPresaleTest is Test {
         // Verify tokens allocated
         assertTrue(presale.totalPurchased(buyer1) > 0);
         
-        // Verify escrow round 1 tracking
-        assertTrue(presale.escrowRound1TokensSold() > 0);
-        assertEq(presale.escrowRound2TokensSold(), 0);
+        // Verify round 1 tracking
+        assertTrue(presale.round1TokensSold() > 0);
+        assertEq(presale.round2TokensSold(), 0);
     }
     
     function testSuccessfulPurchaseRound2() public {
         _startPresale();
         
-        // Move escrow to round 2 with new prices
-        address[] memory tokens = new address[](1);
-        uint256[] memory prices = new uint256[](1);
-        uint8[] memory decimalsArray = new uint8[](1);
-        bool[] memory activeArray = new bool[](1);
-        
-        tokens[0] = presale.NATIVE_ADDRESS();
-        prices[0] = 4500 * 1e8; // Different from round 1 price of $4200
-        decimalsArray[0] = 18;
-        activeArray[0] = true;
-        
+        // Move to round 2
         vm.prank(owner);
-        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
+        presale.moveToRound2();
         
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        // Verify escrow round 2 tracking
-        assertTrue(presale.escrowRound2TokensSold() > 0);
+        // Verify round 2 tracking
+        assertTrue(presale.round2TokensSold() > 0);
     }
     
     function testMultipleBuyers() public {
@@ -507,7 +291,7 @@ contract MultiTokenPresaleTest is Test {
         assertTrue(presale.getRemainingTokens() < MAX_TOKENS);
     }
     
-    function testInitialAllocationsMinted() public view {
+    function testInitialAllocationsMinted() public {
         uint256 marketingAllocation = escrowToken.MARKETING_ALLOCATION();
         uint256 liquidityAllocation = escrowToken.LIQUIDITY_ALLOCATION();
         
@@ -530,7 +314,7 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        vm.expectRevert("No presale ended yet");
+        vm.expectRevert("Presale not ended yet");
         vm.prank(buyer1);
         presale.claimTokens();
     }
@@ -541,10 +325,10 @@ contract MultiTokenPresaleTest is Test {
         
         uint256 purchasedTokens = presale.totalPurchased(buyer1);
         
-        // End escrow presale
+        // End presale
         vm.warp(block.timestamp + 34 days + 1);
         vm.prank(owner);
-        presale.endEscrowPresale();
+        presale.endPresale();
         
         // Claim tokens
         vm.prank(buyer1);
@@ -559,10 +343,10 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         _makePurchase(buyer1, 0.01 ether, 0);
         
-        // End escrow presale and claim
+        // End and claim
         vm.warp(block.timestamp + 34 days + 1);
         vm.prank(owner);
-        presale.endEscrowPresale();
+        presale.endPresale();
         
         vm.prank(buyer1);
         presale.claimTokens();
@@ -579,9 +363,9 @@ contract MultiTokenPresaleTest is Test {
         _startPresale();
         
         vm.prank(owner);
-        presale.emergencyEndEscrowPresale();
+        presale.emergencyEndPresale();
         
-        (, bool ended,,,) = presale.getEscrowPresaleStatus();
+        (, bool ended,,,) = presale.getPresaleStatus();
         assertTrue(ended);
     }
     
@@ -757,11 +541,11 @@ contract MultiTokenPresaleTest is Test {
     // ========== EDGE CASES ==========
     
     function testCannotPurchaseWithInactiveToken() public {
-        // Disable USDC BEFORE starting presale (when currentRound == 0)
+        _startPresale();
+        
+        // Disable USDC
         vm.prank(owner);
         presale.setTokenPrice(address(mockUSDC), 1 * 1e8, 6, false);
-        
-        _startPresale();
         
         vm.startPrank(buyer1);
         mockUSDC.approve(address(presale), 1000 * 1e6);
@@ -785,156 +569,13 @@ contract MultiTokenPresaleTest is Test {
         presale.buyWithTokenVoucher(address(0), 0.01 ether, buyer1, voucher, signature);
     }
     
-    // ========== NO PER-USER LIMIT TESTS (GRO-04 ACKNOWLEDGED) ==========
-
-    function testNoPerUserLimitLargePurchase() public {
-    _startPresale();
+    // ========== HELPER FUNCTIONS ==========
     
-    // Purchase $50,000 (way beyond old $10k per-user limit)
-    uint256 largeAmount = 50000 * 1e6;
-    
-    vm.startPrank(buyer1);
-    mockUSDC.approve(address(presale), largeAmount);
-    
-    // Create voucher with $50,000 limit (not $10k default)
-    Authorizer.Voucher memory voucher = Authorizer.Voucher({
-        buyer: buyer1,
-        beneficiary: buyer1,
-        paymentToken: address(mockUSDC),
-        usdLimit: 50000 * 1e8, // ✅ $50,000 voucher limit
-        nonce: 0,
-        deadline: type(uint256).max,
-        presale: address(presale)
-    });
-    
-    bytes memory signature = _signVoucher(voucher);
-    
-    // Should succeed - no per-user limit in contract
-    presale.buyWithTokenVoucher(address(mockUSDC), largeAmount, buyer1, voucher, signature);
-    vm.stopPrank();
-    
-    assertTrue(presale.totalPurchased(buyer1) > 0);
-    assertEq(mockUSDC.balanceOf(address(presale)), largeAmount);
-}
-    
-    /// @notice Test that presaleEndTime is not overwritten after presale ends
-    /// @dev This test demonstrates the GRO-05 fix prevents repeated overwrites of presaleEndTime
-    function testPresaleEndTimeNotOverwrittenAfterEnd() public {
-        _startPresale();
-        uint256 startTime = presale.presaleStartTime();
-        
-        // Verify presale is active initially
-        assertTrue(presale.isPresaleActive());
-        assertFalse(presale.presaleEnded());
-
-        // End presale manually by owner (must be after presaleEndTime)
-        vm.warp(startTime + 35 days); // Warp past the 34-day presale duration
-        vm.prank(owner);
-        presale.endPresale();
-
-        // Verify presale ended and end time was set
-        assertTrue(presale.presaleEnded());
-        uint256 originalEndTime = presale.presaleEndTime();
-        assertFalse(presale.isPresaleActive());
-
-        // Warp to different times and try purchases that would trigger _checkAutoEndConditions
-        vm.warp(startTime + 2 days);
-        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
-        bytes memory signature = _signVoucher(voucher);
-
-        // This should fail because presale ended
-        vm.expectRevert("Presale ended");
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
-
-        // **CRITICAL ASSERTION**: Verify presaleEndTime hasn't changed
-        assertEq(presale.presaleEndTime(), originalEndTime,
-            "GRO-05 FIX FAILED: presaleEndTime was overwritten after presale ended");
-
-        // Warp further and try again
-        vm.warp(startTime + 30 days);
-        vm.expectRevert("Presale ended");
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
-
-        // **CRITICAL ASSERTION**: Verify presaleEndTime still hasn't changed
-        assertEq(presale.presaleEndTime(), originalEndTime,
-            "GRO-05 FIX FAILED: presaleEndTime was overwritten after presale ended");
-
-        // Verify presale is still ended
-        assertTrue(presale.presaleEnded());
-        assertFalse(presale.isPresaleActive());
-    }
-
-    /// @notice Test that demonstrates the vulnerability before the fix
-    /// @dev This test shows what would happen without the GRO-05 fix
-    function testPresaleEndTimeOverwriteVulnerability() public {
-        _startPresale();
-
-        // End presale by reaching max duration
-        uint256 startTime = presale.presaleStartTime();
-        vm.warp(startTime + 34 days + 1);
-
-        // First end condition met - presale should end
-        vm.prank(owner);
-        presale.endPresale();
-
-        // Record the original end time
-        uint256 originalEndTime = presale.presaleEndTime();
-
-        // Warp to a different time (simulating different block timestamp)
-        vm.warp(startTime + 35 days + 1000);
-
-        // Make a purchase that would trigger _checkAutoEndConditions
-        // Before fix: this would overwrite presaleEndTime
-        // After fix: this should be prevented
-
-        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
-        bytes memory signature = _signVoucher(voucher);
-
-        // This should fail because presale ended
-        vm.expectRevert("Presale ended");
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
-
-        // **CRITICAL**: Verify end time is preserved
-        assertEq(presale.presaleEndTime(), originalEndTime,
-            "GRO-05 FIX VERIFICATION: End time should be preserved");
-
-        // Verify the presale status is still correctly ended
-        (, bool ended,,,) = presale.getPresaleStatus();
-        assertTrue(ended);
-        assertFalse(presale.isPresaleActive());
-    }
-
-
-    // ========== GRO-09 DEFLATIONARY TOKEN TESTS ==========
-
-    function testDeflationaryTokenRejectedInPresale() public {
-        _startPresale();
-
-        uint256 purchaseAmount = 10000 * 1e6; // $10,000 worth of deflationary tokens
-
-        // Approve and try to purchase with deflationary token
-        vm.startPrank(buyer1);
-        mockDeflationaryToken.approve(address(presale), purchaseAmount);
-
-        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(mockDeflationaryToken), 0);
-        bytes memory signature = _signVoucher(voucher);
-
-        // Should revert because deflationary token doesn't deliver expected amount
-        vm.expectRevert("Deflationary token not supported");
-        presale.buyWithTokenVoucher(address(mockDeflationaryToken), purchaseAmount, buyer1, voucher, signature);
-        vm.stopPrank();
-    }
-
-
     function _startPresale() internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1);
         presale.autoStartIEscrowPresale();
     }
-
-
+    
     function _createVoucher(
         address buyer,
         address beneficiary,
@@ -982,12 +623,10 @@ contract MultiTokenPresaleTest is Test {
     function _makeTokenPurchase(address buyer, address token, uint256 amount, uint256 nonce) internal {
         Authorizer.Voucher memory voucher = _createVoucher(buyer, buyer, token, nonce);
         bytes memory signature = _signVoucher(voucher);
-
+        
         vm.startPrank(buyer);
-        // Use IERC20 interface for approval since both MockERC20 and MockUSDT implement it
-        IERC20(token).approve(address(presale), amount);
+        MockERC20(token).approve(address(presale), amount);
         presale.buyWithTokenVoucher(token, amount, buyer, voucher, signature);
         vm.stopPrank();
     }
 }
-

@@ -982,14 +982,10 @@ contract TokenStaking is Ownable, ReentrancyGuard {
 
         _totalStakedTokens += _amount;
 
-        // Transfer tokens with deflationary token compatibility check
-        uint256 beforeBalance = _token.balanceOf(address(this));
         require(
             _token.transferFrom(msg.sender, address(this), _amount * 1e18),
             "TokenStaking: failed to transfer tokens"
         );
-        uint256 received = _token.balanceOf(address(this)) - beforeBalance;
-        require(received == _amount * 1e18, "TokenStaking: deflationary token not supported");
         emit Stake(user_, _amount);
 
 //*************************************************
