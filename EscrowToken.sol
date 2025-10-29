@@ -7,12 +7,15 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title EscrowToken - The utility token for the iEscrow ecosystem
 /// @notice Standard ERC20 with 18 decimals, ERC20Permit for gasless approvals, and burnable tokens
 /// @dev Max supply: 100 billion tokens, Presale allocation: 5 billion tokens
 contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGuard {
     
+    using SafeERC20 for IERC20;
     // ============ CONSTANTS ============
     
     /// @notice Maximum total supply of tokens
@@ -201,7 +204,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Invalid amount");
         
-        IERC20(token).transfer(to, amount);
+        IERC20(token).safeTransfer(to, amount);
         emit EmergencyWithdrawal(token, to, amount);
     }
     
@@ -212,7 +215,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         uint256 balance = address(this).balance;
         require(balance > 0, "No ETH to withdraw");
         
-        to.transfer(balance);
+        Address.sendValue(payable(to), balance);
         emit EmergencyWithdrawal(address(0), to, balance);
     }
     
