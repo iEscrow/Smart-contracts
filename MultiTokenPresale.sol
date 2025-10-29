@@ -6,14 +6,19 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 import "./Authorizer.sol";
 
+/**
+ * @title MultiTokenPresale
+ * @notice Advanced presale contract with KYC voucher authorization system
+ * @dev Implements strict beneficiary validation through cryptographic vouchers:
+ * - UnityPresaleV2.sol: Enforces beneficiary == msg.sender (no delegated purchases)
+ * - MultiTokenPresale.sol: Allows delegated purchases ONLY through authorized vouchers
+ * - This ensures consistent validation across the presale system
+ */
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
-    
-    // Gas buffer for native currency purchases
-    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
-    
     // Token price structure
     struct TokenPrice {
         uint256 priceUSD;        // Price in USD (8 decimals)
@@ -23,18 +28,19 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Presale token details
     IERC20 public presaleToken;
-    uint256 public presaleRate;  // Tokens per USD (18 decimals)
-    uint256 public maxTokensToMint;
+    uint256 public immutable presaleRate;  // Tokens per USD (18 decimals)
+    uint256 public immutable maxTokensToMint;
     uint256 public totalTokensMinted;
     
     // Authorizer integration for voucher-based purchases
     Authorizer public authorizer;
     bool public voucherSystemEnabled = false; // Disabled by default for compatibility
     
+    // Gas buffer for native currency purchases
+    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
+    
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
-    // mapping(address => uint256) public maxPurchasePerToken;
-    uint256 public maxTotalPurchasePerUser; // Total USD value limit per user
     
     // User tracking
     mapping(address => mapping(address => uint256)) public purchasedAmounts; // user => token => amount
@@ -171,8 +177,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             decimals: 6
         });
         
-        // Set total USD limit per user to $10,000 (all tokens combined)
-        maxTotalPurchasePerUser = 10000 * 1e8; // $10,000 total
     }
     
     // ============ PRICE MANAGEMENT ============
@@ -212,7 +216,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         presaleEnded = false;
 
         emit PresaleStarted(presaleStartTime, presaleEndTime);
-        emit RoundAdvanced(0, 1, block.timestamp);
+        _handleRoundTransition(0, 1);
     }
     
     // Auto-start presale on November 11, 2025 - Anyone can trigger
@@ -232,7 +236,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         emit PresaleStarted(presaleStartTime, presaleEndTime);
         emit AutoStartTriggered(block.timestamp);
-        emit RoundAdvanced(0, 1, block.timestamp);
+        _handleRoundTransition(0, 1);
     }
     
     function endPresale() external onlyOwner {
@@ -273,10 +277,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(currentRound == 1, "Not in round 1");
         require(!presaleEnded, "Presale already ended");
         
-        currentRound = 2;
-        round1EndTime = block.timestamp;
-        
-        emit RoundAdvanced(1, 2, block.timestamp);
+        _handleRoundTransition(1, 2);
     }
     
     // ============ VOUCHER-ONLY PURCHASE FUNCTIONS ============
@@ -285,8 +286,12 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ VOUCHER-BASED PURCHASE FUNCTIONS ============
     
-    /// @notice Purchase with native currency using voucher authorization
-    /// @param beneficiary Address that will receive the tokens
+    /// @notice Purchase with native currency using voucher authorization (KYC-AUTHORIZED DELEGATED PURCHASES)
+    /// @dev BENEFICIARY VALIDATION POLICY: Allows delegated purchases ONLY through authorized vouchers
+    /// - voucher.buyer must equal msg.sender (only voucher holder can use it)
+    /// - voucher.beneficiary must equal beneficiary parameter (specified in voucher)
+    /// - This enables KYC-verified delegated purchases while preventing unauthorized ones
+    /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
     function buyWithNativeVoucher(
@@ -316,7 +321,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 paymentAmount = msg.value - gasCost;
         
         // Calculate USD amount for authorization
-        uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
+        uint256 usdAmount = _convertToUsd(NATIVE_ADDRESS, paymentAmount);
         
         // Authorize purchase with voucher
         bool authorized = authorizer.authorize(voucher, signature, NATIVE_ADDRESS, usdAmount);
@@ -326,77 +331,85 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
     }
     
-    /// @notice Purchase with ERC20 tokens using voucher authorization
+    /// @notice Purchase with ERC20 tokens using voucher authorization (KYC-AUTHORIZED DELEGATED PURCHASES)
+    /// @dev BENEFICIARY VALIDATION POLICY: Allows delegated purchases ONLY through authorized vouchers
+    /// - voucher.buyer must equal msg.sender (only voucher holder can use it)
+    /// - voucher.beneficiary must equal beneficiary parameter (specified in voucher)
+    /// - This enables KYC-verified delegated purchases while preventing unauthorized ones
     /// @param token Payment token address
     /// @param amount Payment token amount
-    /// @param beneficiary Address that will receive the tokens
+    /// @param beneficiary Address that will receive the tokens (must match voucher.beneficiary)
     /// @param voucher Purchase voucher containing authorization details
     /// @param signature EIP-712 signature of the voucher
-    function buyWithTokenVoucher(
-        address token,
-        uint256 amount,
-        address beneficiary,
-        Authorizer.Voucher calldata voucher,
-        bytes calldata signature
-    ) external nonReentrant whenNotPaused {
-        require(voucherSystemEnabled, "Voucher system not enabled");
-        require(address(authorizer) != address(0), "Authorizer not set");
-        require(beneficiary != address(0), "Invalid beneficiary");
-        require(amount > 0, "Invalid amount");
-        require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
-        require(presaleStartTime > 0, "Presale not started");
-        require(block.timestamp >= presaleStartTime, "Presale not started yet");
-        require(block.timestamp <= presaleEndTime, "Presale ended");
-        require(!presaleEnded, "Presale ended");
-        require(voucher.buyer == msg.sender, "Only buyer can use voucher");
-        require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
-        require(voucher.paymentToken == token, "Invalid payment token");
-        
-        TokenPrice memory tokenPrice = tokenPrices[token];
-        require(tokenPrice.isActive, "Token not accepted");
-        
-        // Calculate USD amount for authorization
-        uint256 usdAmount = (amount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
-        
-        // Authorize purchase with voucher
-        bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
-        require(authorized, "Voucher authorization failed");
-        
-        // Transfer tokens (SafeERC20 handles USDT compatibility)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        
-        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
-        _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
-    }
+    // ✅ AFTER (Fixed):
+function buyWithTokenVoucher(
+    address token,
+    uint256 amount,
+    address beneficiary,
+    Authorizer.Voucher calldata voucher,
+    bytes calldata signature
+) external nonReentrant whenNotPaused {
+    require(voucherSystemEnabled, "Voucher system not enabled");
+    require(address(authorizer) != address(0), "Authorizer not set");
+    require(beneficiary != address(0), "Invalid beneficiary");
+    require(amount > 0, "Invalid amount");
+    require(token != NATIVE_ADDRESS, "Use buyWithNativeVoucher for native currency");
+    require(presaleStartTime > 0, "Presale not started");
+    require(block.timestamp >= presaleStartTime, "Presale not started yet");
+    require(block.timestamp <= presaleEndTime, "Presale ended");
+    require(!presaleEnded, "Presale ended");
+    require(voucher.buyer == msg.sender, "Only buyer can use voucher");
+    require(voucher.beneficiary == beneficiary, "Beneficiary mismatch");
+    require(voucher.paymentToken == token, "Invalid payment token");
+    
+    TokenPrice memory tokenPrice = tokenPrices[token];
+    require(tokenPrice.isActive, "Token not accepted");
+    
+    // Calculate USD amount for authorization
+    uint256 usdAmount = _convertToUsd(token, amount);
+    
+    // Authorize purchase with voucher
+    bool authorized = authorizer.authorize(voucher, signature, token, usdAmount);
+    require(authorized, "Voucher authorization failed");
+    
+    // Use SafeERC20 with balance check
+    uint256 beforeBalance = IERC20(token).balanceOf(address(this));
+    IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+    uint256 afterBalance = IERC20(token).balanceOf(address(this));
+    uint256 received = afterBalance - beforeBalance;
+    
+    // Ensure full amount received (no deflationary tokens)
+    require(received == amount, "Deflationary token not supported");
+    
+    uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amount, beneficiary, usdAmount);
+    
+    // Ensure token amount > 0
+    require(tokenAmount > 0, "Token amount must be greater than zero");
+    
+    _processVoucherPurchase(beneficiary, token, amount, tokenAmount, voucher);
+}
     
     // ============ INTERNAL FUNCTIONS ============
     
     function _calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) internal returns (uint256) {
-        TokenPrice memory price = tokenPrices[paymentToken];
-        require(price.isActive, "Token not accepted");
-        
         // Convert payment amount to USD value
-        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
 
-        // Track USD spent for analytics (no limit enforced)
-        totalUsdPurchased[beneficiary] += usdValue * 1e8;
+        // Track USD spent for analytics (usdValue already has 8 decimals)
+        totalUsdPurchased[beneficiary] += usdValue;
         
         // Calculate presale tokens (limit enforced at total token level in _processPurchase)
-        return (usdValue * presaleRate) ;
+        return (usdValue * presaleRate) / 1e8;
     }
     
-    /// @notice Calculate token amount for voucher purchases (USD amount already calculated in 8 decimals)
-    function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
-        TokenPrice memory price = tokenPrices[paymentToken];
-        require(price.isActive, "Token not accepted");
-        
-        // Track USD spent for analytics (usdAmount already has 8 decimals)
-        totalUsdPurchased[beneficiary] += usdAmount;
-        
-        // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
-        return (usdAmount * presaleRate) / 1e8;
-    }
+   function _calculateTokenAmountForVoucher(address paymentToken, uint256 paymentAmount, address beneficiary, uint256 usdAmount) internal returns (uint256) {
+    // Track USD spent for analytics (usdAmount already has 8 decimals)
+    totalUsdPurchased[beneficiary] += usdAmount; // Keep for tracking/analytics
     
+    // Calculate presale tokens: usdAmount (8 dec) * presaleRate (18 dec) / 1e8 = tokens (18 dec)
+    // Only limit: total token supply (maxTokensToMint) enforced in _processPurchase
+    return (usdAmount * presaleRate) / 1e8;
+}
     function _processPurchase(
         address beneficiary,
         address paymentToken,
@@ -467,6 +480,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Check if presale should auto-end
     function _checkAutoEndConditions() internal {
+        // Prevent overwrites if already ended
+        if (presaleEnded) return;
+
         // End if all tokens sold
         if (totalTokensMinted >= maxTokensToMint) {
             presaleEnded = true;
@@ -475,21 +491,18 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             emit PresaleEnded(block.timestamp);
             return;
         }
-        
-        // End if 34 days passed
-        if (block.timestamp >= presaleStartTime + MAX_PRESALE_DURATION) {
+
+        // End if presale end time reached
+        if (block.timestamp >= presaleEndTime) {
             presaleEnded = true;
-            presaleEndTime = block.timestamp;
-            emit PresaleEndedEarly("Maximum duration reached", block.timestamp);
+            emit PresaleEndedEarly("Presale duration reached", block.timestamp);
             emit PresaleEnded(block.timestamp);
             return;
         }
-        
+
         // Auto-advance from Round 1 to Round 2 if Round 1 time is up
         if (currentRound == 1 && block.timestamp >= round1EndTime) {
-            currentRound = 2;
-            round1EndTime = block.timestamp; // Mark actual end time
-            emit RoundAdvanced(1, 2, block.timestamp);
+            _handleRoundTransition(1, 2);
         }
     }
     
@@ -513,7 +526,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     function withdrawNative() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No native currency to withdraw");
-        payable(owner()).transfer(balance);
+        Address.sendValue(payable(owner()), balance);
     }
     
     function withdrawToken(address token) external onlyOwner {
@@ -549,15 +562,13 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function calculateTokenAmount(address paymentToken, uint256 paymentAmount, address beneficiary) external view returns (uint256) {
-        TokenPrice memory price = tokenPrices[paymentToken];
-        require(price.isActive, "Token not accepted");
-        
         // Convert payment amount to USD value
-        uint256 usdValue = (paymentAmount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        uint256 usdValue = _convertToUsd(paymentToken, paymentAmount);
         
-        // No per-user limit - only total token supply limit enforced
+        // View function for external queries - no limits enforced here
+        // Per-user and total token supply limits enforced in actual purchase functions
         // Calculate presale tokens
-        return (usdValue * presaleRate);
+        return (usdValue * presaleRate) / 1e8;
     }
     
     function getRemainingTokens() external view returns (uint256) {
@@ -685,10 +696,32 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         _checkAutoEndConditions();
     }
     
-    // Helper functions for USD value calculations
+    // Helper functions for USD value calculations - GRO-13 Refactoring
+    function _convertToUsd(address paymentToken, uint256 amount) internal view returns (uint256 usdValue) {
+        TokenPrice memory price = tokenPrices[paymentToken];
+        require(price.isActive, "Token not accepted");
+        
+        // Convert to USD value in 8 decimal format
+        // price.priceUSD is already in 8 decimals (e.g., $4200 = 420000000000)
+        usdValue = (amount * price.priceUSD) / (10 ** price.decimals);
+    }
+    
+    function _handleRoundTransition(uint256 fromRound, uint256 toRound) internal {
+        require(fromRound < toRound, "Invalid round transition");
+        require(!presaleEnded, "Presale already ended");
+        
+        currentRound = toRound;
+        
+        // Update round end time if transitioning from round 1
+        if (fromRound == 1) {
+            round1EndTime = block.timestamp;
+        }
+        
+        emit RoundAdvanced(fromRound, toRound, block.timestamp);
+    }
+    
     function _getUSDValue(address token, uint256 amount) internal view returns (uint256) {
-        TokenPrice memory price = tokenPrices[token];
-        return (amount * price.priceUSD) / (10 ** price.decimals * 10 ** USD_DECIMALS);
+        return _convertToUsd(token, amount);
     }
     
     function _getUserTotalUSDValue(address user) internal view returns (uint256) {
@@ -704,55 +737,46 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address[] memory tokens,
         string[] memory symbols,
         uint256[] memory prices,
-        uint256[] memory maxPurchases,
         bool[] memory active
     ) {
         tokens = new address[](7);
         symbols = new string[](7);
         prices = new uint256[](7);
-        maxPurchases = new uint256[](7);
         active = new bool[](7);
         
         tokens[0] = NATIVE_ADDRESS;
         symbols[0] = "ETH";
         prices[0] = tokenPrices[NATIVE_ADDRESS].priceUSD;
-        maxPurchases[0] = maxTotalPurchasePerUser;
         active[0] = tokenPrices[NATIVE_ADDRESS].isActive;
         
         tokens[1] = WETH_ADDRESS;
         symbols[1] = "WETH";
         prices[1] = tokenPrices[WETH_ADDRESS].priceUSD;
-        maxPurchases[1] = maxTotalPurchasePerUser;
         active[1] = tokenPrices[WETH_ADDRESS].isActive;
         
         tokens[2] = WBNB_ADDRESS;
         symbols[2] = "WBNB";
         prices[2] = tokenPrices[WBNB_ADDRESS].priceUSD;
-        maxPurchases[2] = maxTotalPurchasePerUser;
         active[2] = tokenPrices[WBNB_ADDRESS].isActive;
         
         tokens[3] = LINK_ADDRESS;
         symbols[3] = "LINK";
         prices[3] = tokenPrices[LINK_ADDRESS].priceUSD;
-        maxPurchases[3] = maxTotalPurchasePerUser;
         active[3] = tokenPrices[LINK_ADDRESS].isActive;
         
         tokens[4] = WBTC_ADDRESS;
         symbols[4] = "WBTC";
         prices[4] = tokenPrices[WBTC_ADDRESS].priceUSD;
-        maxPurchases[4] = maxTotalPurchasePerUser;
         active[4] = tokenPrices[WBTC_ADDRESS].isActive;
         
         tokens[5] = USDC_ADDRESS;
         symbols[5] = "USDC";
         prices[5] = tokenPrices[USDC_ADDRESS].priceUSD;
-        maxPurchases[5] = maxTotalPurchasePerUser;
         active[5] = tokenPrices[USDC_ADDRESS].isActive;
         
         tokens[6] = USDT_ADDRESS;
         symbols[6] = "USDT";
         prices[6] = tokenPrices[USDT_ADDRESS].priceUSD;
-        maxPurchases[6] = maxTotalPurchasePerUser;
         active[6] = tokenPrices[USDT_ADDRESS].isActive;
     }
     
@@ -776,7 +800,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         for (uint256 i = 0; i < tokens.length; i++) {
             amounts[i] = purchasedAmounts[user][tokens[i]];
             if (amounts[i] > 0) {
-                usdValues[i] = _getUSDValue(tokens[i], amounts[i]);
+                usdValues[i] = _convertToUsd(tokens[i], amounts[i]);
             }
         }
     }
