@@ -194,11 +194,11 @@ contract GRO15DeflationaryTokenTest is Test {
     }
     
     // ========== DEFLATIONARY TOKEN TESTS ==========
+    // GRO-09 FIX: Deflationary tokens are now REJECTED
     
-    /// @notice Test that deflationary token (10% fee) credits correct amount
+    /// @notice Test that deflationary token (10% fee) is rejected
     function testDeflationaryTokenCorrectCrediting() public {
         uint256 purchaseAmount = 10 * 1e18; // 10 DEFT tokens
-        uint256 expectedReceived = purchaseAmount * 90 / 100; // 90% after 10% fee
         
         // Buyer approves tokens
         vm.startPrank(buyer1);
@@ -208,39 +208,16 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        // Record initial balances
-        uint256 buyerBalanceBefore = deflationaryToken.balanceOf(buyer1);
-        uint256 presaleBalanceBefore = deflationaryToken.balanceOf(address(presale));
-        
-        // Purchase
+        // Purchase should REVERT due to deflationary token detection
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), purchaseAmount, buyer1, voucher, signature);
         
         vm.stopPrank();
-        
-        // Check balances
-        uint256 buyerBalanceAfter = deflationaryToken.balanceOf(buyer1);
-        uint256 presaleBalanceAfter = deflationaryToken.balanceOf(address(presale));
-        
-        // Presale should receive 90% (10% fee burned)
-        assertEq(presaleBalanceAfter - presaleBalanceBefore, expectedReceived, "Presale should receive 90% after fee");
-        
-        // Calculate expected tokens based on actual received amount
-        uint256 expectedUsdValue = (expectedReceived * 100 * 1e8) / 1e18; // $100 per token, 8 decimals
-        uint256 expectedPresaleTokens = (expectedUsdValue * PRESALE_RATE) / 1e8;
-        
-        // Check presale tokens credited
-        uint256 userPurchased = presale.totalPurchased(buyer1);
-        assertEq(userPurchased, expectedPresaleTokens, "User should receive tokens based on actual amount");
-        
-        // Verify USD tracking
-        uint256 userUsdSpent = presale.totalUsdPurchased(buyer1);
-        assertEq(userUsdSpent, expectedUsdValue, "USD tracking should reflect actual received amount");
     }
     
-    /// @notice Test that variable fee token (5% fee) works correctly
+    /// @notice Test that variable fee token (5% fee) is rejected
     function testVariableFeeTokenCorrectCrediting() public {
         uint256 purchaseAmount = 10000 * 1e6; // 10000 VFEE tokens
-        uint256 expectedReceived = purchaseAmount * 95 / 100; // 95% after 5% fee
         
         // Buyer approves tokens
         vm.startPrank(buyer1);
@@ -250,63 +227,35 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(variableFeeToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        // Purchase
+        // Purchase should REVERT due to fee-on-transfer token detection
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(variableFeeToken), purchaseAmount, buyer1, voucher, signature);
         
         vm.stopPrank();
-        
-        // Calculate expected values
-        uint256 expectedUsdValue = (expectedReceived * 1 * 1e8) / 1e6; // $1 per token, 8 decimals
-        uint256 expectedPresaleTokens = (expectedUsdValue * PRESALE_RATE) / 1e8;
-        
-        // Check presale tokens credited
-        uint256 userPurchased = presale.totalPurchased(buyer1);
-        assertEq(userPurchased, expectedPresaleTokens, "User should receive tokens based on actual amount");
     }
     
-    /// @notice Test multiple purchases with deflationary token
+    /// @notice Test multiple purchases with deflationary token are rejected
     function testMultipleDeflationaryPurchases() public {
         vm.startPrank(buyer1);
         
-        // First purchase
+        // First purchase attempt - should fail
         uint256 amount1 = 5 * 1e18;
         deflationaryToken.approve(address(presale), amount1);
         Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory sig1 = _signVoucher(voucher1);
+        
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), amount1, buyer1, voucher1, sig1);
         
-        uint256 tokensAfterFirst = presale.totalPurchased(buyer1);
-        
-        // Second purchase
-        uint256 amount2 = 3 * 1e18;
-        deflationaryToken.approve(address(presale), amount2);
-        Authorizer.Voucher memory voucher2 = _createVoucher(buyer1, buyer1, address(deflationaryToken), 1);
-        bytes memory sig2 = _signVoucher(voucher2);
-        presale.buyWithTokenVoucher(address(deflationaryToken), amount2, buyer1, voucher2, sig2);
-        
-        uint256 tokensAfterSecond = presale.totalPurchased(buyer1);
-        
         vm.stopPrank();
-        
-        // Verify both purchases credited correctly
-        assertTrue(tokensAfterSecond > tokensAfterFirst, "Second purchase should add more tokens");
-        
-        // Calculate expected total
-        uint256 expectedReceived1 = amount1 * 90 / 100;
-        uint256 expectedReceived2 = amount2 * 90 / 100;
-        uint256 totalExpectedUsd = ((expectedReceived1 + expectedReceived2) * 100 * 1e8) / 1e18;
-        uint256 expectedTotalTokens = (totalExpectedUsd * PRESALE_RATE) / 1e8;
-        
-        assertEq(tokensAfterSecond, expectedTotalTokens, "Total tokens should match expected");
     }
     
-    /// @notice Test edge case: very high fee (50%)
+    /// @notice Test edge case: very high fee (50%) is rejected
     function testHighFeeToken() public {
         // Set variable fee token to 50%
         variableFeeToken.setFee(50);
         
         uint256 purchaseAmount = 10000 * 1e6;
-        uint256 expectedReceived = purchaseAmount * 50 / 100; // 50% after 50% fee
         
         vm.startPrank(buyer1);
         variableFeeToken.approve(address(presale), purchaseAmount);
@@ -314,16 +263,10 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(variableFeeToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(variableFeeToken), purchaseAmount, buyer1, voucher, signature);
         
         vm.stopPrank();
-        
-        // Verify correct crediting with 50% fee
-        uint256 expectedUsdValue = (expectedReceived * 1 * 1e8) / 1e6;
-        uint256 expectedPresaleTokens = (expectedUsdValue * PRESALE_RATE) / 1e8;
-        
-        uint256 userPurchased = presale.totalPurchased(buyer1);
-        assertEq(userPurchased, expectedPresaleTokens, "Should handle 50% fee correctly");
     }
     
     /// @notice Test that 100% fee (all tokens burned) reverts
@@ -346,10 +289,9 @@ contract GRO15DeflationaryTokenTest is Test {
         vm.stopPrank();
     }
     
-    /// @notice Test event emission with deflationary token
+    /// @notice Test event emission with deflationary token - should reject
     function testDeflationaryTokenEventEmission() public {
         uint256 purchaseAmount = 10 * 1e18;
-        uint256 expectedReceived = purchaseAmount * 90 / 100;
         
         vm.startPrank(buyer1);
         deflationaryToken.approve(address(presale), purchaseAmount);
@@ -357,22 +299,16 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        // Calculate expected values
-        uint256 expectedUsdValue = (expectedReceived * 100 * 1e8) / 1e18;
-        uint256 expectedTokenAmount = (expectedUsdValue * PRESALE_RATE) / 1e8;
-        
-        // Just do the purchase - event testing without expectEmit
+        // Should revert
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), purchaseAmount, buyer1, voucher, signature);
-        
-        // Verify the purchase was recorded correctly
-        assertEq(presale.totalPurchased(buyer1), expectedTokenAmount, "Tokens should match expected amount");
         
         vm.stopPrank();
     }
     
-    /// @notice Test claiming tokens after purchase with deflationary token
+    /// @notice Test claiming tokens after purchase with deflationary token - purchase should fail
     function testClaimAfterDeflationaryPurchase() public {
-        // Purchase with deflationary token
+        // Purchase with deflationary token should be rejected
         uint256 purchaseAmount = 10 * 1e18;
         
         vm.startPrank(buyer1);
@@ -381,53 +317,28 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
+        // Should revert
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), purchaseAmount, buyer1, voucher, signature);
         
-        uint256 expectedTokens = presale.totalPurchased(buyer1);
-        
-        // End presale
         vm.stopPrank();
-        vm.prank(owner);
-        presale.emergencyEndEscrowPresale();
-        
-        // Claim tokens
-        vm.prank(buyer1);
-        presale.claimTokens();
-        
-        // Verify received correct amount
-        uint256 buyerBalance = escrowToken.balanceOf(buyer1);
-        assertEq(buyerBalance, expectedTokens, "Should receive correct amount of presale tokens");
     }
     
-    /// @notice Test different buyers with deflationary tokens
+    /// @notice Test different buyers with deflationary tokens - both should be rejected
     function testMultipleBuyersDeflationary() public {
-        // Buyer 1 purchase
+        // Buyer 1 purchase - should fail
         vm.startPrank(buyer1);
         uint256 amount1 = 10 * 1e18;
         deflationaryToken.approve(address(presale), amount1);
         Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory sig1 = _signVoucher(voucher1);
+        
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), amount1, buyer1, voucher1, sig1);
-        uint256 buyer1Tokens = presale.totalPurchased(buyer1);
         vm.stopPrank();
-        
-        // Buyer 2 purchase
-        vm.startPrank(buyer2);
-        uint256 amount2 = 15 * 1e18;
-        deflationaryToken.approve(address(presale), amount2);
-        Authorizer.Voucher memory voucher2 = _createVoucher(buyer2, buyer2, address(deflationaryToken), 0);
-        bytes memory sig2 = _signVoucher(voucher2);
-        presale.buyWithTokenVoucher(address(deflationaryToken), amount2, buyer2, voucher2, sig2);
-        uint256 buyer2Tokens = presale.totalPurchased(buyer2);
-        vm.stopPrank();
-        
-        // Verify both got correct amounts (proportional to their actual received amounts)
-        uint256 expectedRatio = (amount2 * 100) / amount1; // Should be 150 (1.5x)
-        uint256 actualRatio = (buyer2Tokens * 100) / buyer1Tokens;
-        assertEq(actualRatio, expectedRatio, "Token amounts should be proportional to purchase amounts");
     }
     
-    /// @notice Fuzz test with various purchase amounts
+    /// @notice Fuzz test with various purchase amounts - all should be rejected
     function testFuzzDeflationaryPurchaseAmount(uint256 purchaseAmount) public {
         // Bound the purchase amount to reasonable values
         purchaseAmount = bound(purchaseAmount, 1e15, 100 * 1e18); // 0.001 to 100 tokens
@@ -441,26 +352,10 @@ contract GRO15DeflationaryTokenTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(deflationaryToken), 0);
         bytes memory signature = _signVoucher(voucher);
         
-        // Record balance before
-        uint256 presaleBalanceBefore = deflationaryToken.balanceOf(address(presale));
-        
+        // Should revert for any amount
+        vm.expectRevert("Deflationary token not supported");
         presale.buyWithTokenVoucher(address(deflationaryToken), purchaseAmount, buyer1, voucher, signature);
         
         vm.stopPrank();
-        
-        // Verify presale received approximately 90% (10% fee) - allow 1 wei rounding error
-        uint256 presaleBalanceAfter = deflationaryToken.balanceOf(address(presale));
-        uint256 actualReceived = presaleBalanceAfter - presaleBalanceBefore;
-        uint256 expectedReceived = purchaseAmount * 90 / 100;
-        
-        // Allow for 1 wei rounding error due to integer division
-        assertApproxEqAbs(actualReceived, expectedReceived, 1, "Presale should receive ~90% of purchase amount");
-        
-        // Verify user credited correctly based on actual received
-        uint256 expectedUsdValue = (actualReceived * 100 * 1e8) / 1e18;
-        uint256 expectedPresaleTokens = (expectedUsdValue * PRESALE_RATE) / 1e8;
-        uint256 userPurchased = presale.totalPurchased(buyer1);
-        
-        assertEq(userPurchased, expectedPresaleTokens, "User should be credited based on actual received amount");
     }
 }

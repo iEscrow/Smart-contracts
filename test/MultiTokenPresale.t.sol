@@ -11,10 +11,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract MockExecutor {
     receive() external payable {}
 
-    function accept(MultiTokenPresale presale) external {
-        presale.acceptGovernanceExecutor();
-    }
-
     function acceptTreasury(MultiTokenPresale presale) external {
         presale.acceptTreasury();
     }
@@ -307,106 +303,8 @@ contract MultiTokenPresaleTest is Test {
         assertEq(presale.escrowCurrentRound(), 2);
     }
 
-    function testGovernanceExecutorFlow() public {
-        MockExecutor initialExecutor = new MockExecutor();
-        MockExecutor newExecutor = new MockExecutor();
-
-        // Activate governance executor while owner controls contract
-        vm.prank(owner);
-        presale.activateGovernanceExecutor(address(initialExecutor));
-
-        // Owner no longer has privileged access
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.setTokenPrice(address(mockUSDC), 2 * 1e8, 6, true);
-
-        // Executor can update prices through delegated call
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(2 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-        (uint256 updatedPrice,,) = presale.tokenPrices(address(mockUSDC));
-        assertEq(updatedPrice, 2 * 1e8);
-
-        // Executor proposes a replacement governance executor
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.proposeGovernanceExecutor.selector,
-                address(newExecutor)
-            )
-        );
-
-        // Only the pending executor can accept
-        vm.prank(owner);
-        vm.expectRevert("Caller not pending executor");
-        presale.acceptGovernanceExecutor();
-
-        newExecutor.accept(presale);
-
-        // Previous executor no longer has permissions
-        vm.expectRevert("Executor call failed");
-        initialExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(3 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-
-        // New executor controls privileged calls
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.setTokenPrice.selector,
-                address(mockUSDC),
-                uint256(3 * 1e8),
-                uint8(6),
-                true
-            )
-        );
-        (uint256 latestPrice,,) = presale.tokenPrices(address(mockUSDC));
-        assertEq(latestPrice, 3 * 1e8);
-
-        // Owner cannot change treasury anymore
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.proposeTreasury(address(newExecutor));
-
-        // Executor proposes itself as treasury
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(
-                presale.proposeTreasury.selector,
-                address(newExecutor)
-            )
-        );
-        newExecutor.acceptTreasury(presale);
-        assertEq(presale.treasury(), address(newExecutor));
-
-        // Fund the presale and test withdrawals
-        vm.deal(address(presale), 1 ether);
-
-        vm.prank(owner);
-        vm.expectRevert("Governance: executor only");
-        presale.withdrawNative();
-
-        uint256 executorBalanceBefore = address(newExecutor).balance;
-        newExecutor.execute(
-            address(presale),
-            abi.encodeWithSelector(presale.withdrawNative.selector)
-        );
-        assertEq(address(newExecutor).balance, executorBalanceBefore + 1 ether);
-    }
+    // GRO-02: Governance executor feature removed - using hardware wallet owner only
+    // function testGovernanceExecutorFlow() removed
     
     function testPresaleAutoEndsAfter34Days() public {
         _startPresale();
@@ -820,7 +718,11 @@ contract MultiTokenPresaleTest is Test {
     /// @notice Test that presaleEndTime is not overwritten after presale ends
     /// @dev This test demonstrates the GRO-05 fix prevents repeated overwrites of presaleEndTime
     function testPresaleEndTimeNotOverwrittenAfterEnd() public {
-        _startPresale();
+        // Start MAIN presale (not escrow) to test main presale endPresale() function
+        vm.warp(PRESALE_LAUNCH_DATE + 1);
+        vm.prank(owner);
+        presale.startPresale(34 days);
+        
         uint256 startTime = presale.presaleStartTime();
         
         // Verify presale is active initially
@@ -837,13 +739,12 @@ contract MultiTokenPresaleTest is Test {
         uint256 originalEndTime = presale.presaleEndTime();
         assertFalse(presale.isPresaleActive());
 
-        // Warp to different times and try purchases that would trigger _checkAutoEndConditions
-        vm.warp(startTime + 2 days);
+        // Try purchases after presale ended - should fail
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
         bytes memory signature = _signVoucher(voucher);
 
-        // This should fail because presale ended
-        vm.expectRevert("Presale ended");
+        // This should fail because presale ended (presaleEnded flag is true)
+        vm.expectRevert("No presale active");
         vm.prank(buyer1);
         presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
 
@@ -851,9 +752,9 @@ contract MultiTokenPresaleTest is Test {
         assertEq(presale.presaleEndTime(), originalEndTime,
             "GRO-05 FIX FAILED: presaleEndTime was overwritten after presale ended");
 
-        // Warp further and try again
-        vm.warp(startTime + 30 days);
-        vm.expectRevert("Presale ended");
+        // Warp further into future and try again
+        vm.warp(startTime + 40 days);
+        vm.expectRevert("No presale active");
         vm.prank(buyer1);
         presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
 
@@ -869,7 +770,10 @@ contract MultiTokenPresaleTest is Test {
     /// @notice Test that demonstrates the vulnerability before the fix
     /// @dev This test shows what would happen without the GRO-05 fix
     function testPresaleEndTimeOverwriteVulnerability() public {
-        _startPresale();
+        // Start MAIN presale (not escrow) to test main presale endPresale() function
+        vm.warp(PRESALE_LAUNCH_DATE + 1);
+        vm.prank(owner);
+        presale.startPresale(34 days);
 
         // End presale by reaching max duration
         uint256 startTime = presale.presaleStartTime();
@@ -892,8 +796,8 @@ contract MultiTokenPresaleTest is Test {
         Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(0), 0);
         bytes memory signature = _signVoucher(voucher);
 
-        // This should fail because presale ended
-        vm.expectRevert("Presale ended");
+        // This should fail because presale ended (presaleEnded flag is true)
+        vm.expectRevert("No presale active");
         vm.prank(buyer1);
         presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher, signature);
 

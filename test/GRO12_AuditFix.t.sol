@@ -323,7 +323,7 @@ contract GRO12_AuditFixTest is Test {
         
         // Verify we're in escrow round 1
         assertEq(presale.escrowCurrentRound(), 1);
-        assertEq(presale.currentRound(), 0); // Main presale round should be 0
+        assertEq(presale.currentRound(), 0); // Main presale round should be 0 (not started)
         
         // Advance to escrow round 2
         address[] memory tokens = new address[](1);
@@ -341,7 +341,7 @@ contract GRO12_AuditFixTest is Test {
         
         // Verify escrow round 2
         assertEq(presale.escrowCurrentRound(), 2);
-        assertEq(presale.currentRound(), 0); // Main presale round still 0
+        assertEq(presale.currentRound(), 0); // Main presale round still 0 (not started)
     }
     
     /// @notice Test view functions return correct data for both presales
