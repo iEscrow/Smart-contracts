@@ -785,114 +785,37 @@ contract MultiTokenPresaleTest is Test {
         presale.buyWithTokenVoucher(address(0), 0.01 ether, buyer1, voucher, signature);
     }
     
-    // ========== GRO-04 PER-USER PURCHASE LIMIT TESTS ==========
+    // ========== NO PER-USER LIMIT TESTS (GRO-04 ACKNOWLEDGED) ==========
 
-    function testPerUserLimitEnforcedNativeCurrency() public {
-        _startPresale();
-
-        // Calculate maximum ETH purchase for $10,000 limit at $4200/ETH = ~2.38 ETH
-        // Use explicit calculation to avoid rational numbers: (10000 * 1e18) / 4200
-        uint256 maxEthAmount = 2380952380952380952; // ~2.38 ETH in wei
-
-        // Should succeed at exactly the limit (allowing for rounding differences)
-        Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(0), 0);
-        bytes memory signature1 = _signVoucher(voucher1);
-
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: maxEthAmount}(buyer1, voucher1, signature1);
-        
-        assertTrue(presale.totalPurchased(buyer1) > 0, "Purchase should succeed at limit");
-    }
+    function testNoPerUserLimitLargePurchase() public {
+    _startPresale();
     
-    function testPerUserLimitExceeded() public {
-        _startPresale();
-
-        // Try to purchase more than $10,000 limit (this should fail)
-        // Use an amount that exceeds per-user cap but fits within voucher limit
-        uint256 excessEthAmount = 2380952380952380952; // ~2.38 ETH = exactly at per-user limit
-
-        // First make a purchase at the limit
-        Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(0), 0);
-        bytes memory signature1 = _signVoucher(voucher1);
-
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: excessEthAmount}(buyer1, voucher1, signature1);
-
-        // Now try to make another purchase - this should exceed the per-user cap
-        Authorizer.Voucher memory voucher2 = _createVoucher(buyer1, buyer1, address(0), 1);
-        bytes memory signature2 = _signVoucher(voucher2);
-
-        vm.expectRevert("Exceeds per-user cap");
-        vm.prank(buyer1);
-        presale.buyWithNativeVoucher{value: 0.01 ether}(buyer1, voucher2, signature2);
-    }
+    // Purchase $50,000 (way beyond old $10k per-user limit)
+    uint256 largeAmount = 50000 * 1e6;
     
-    function testPerUserLimitWithTokens() public {
-        _startPresale();
-        
-        // Calculate maximum USDC purchase for $10,000 limit = 10,000 USDC
-        uint256 maxUsdcAmount = 10000 * 1e6; // $10,000 USDC
-        
-        // Should succeed at exactly the limit
-        vm.startPrank(buyer1);
-        mockUSDC.approve(address(presale), maxUsdcAmount);
-        
-        Authorizer.Voucher memory voucher = _createVoucher(buyer1, buyer1, address(mockUSDC), 0);
-        bytes memory signature = _signVoucher(voucher);
-        
-        presale.buyWithTokenVoucher(address(mockUSDC), maxUsdcAmount, buyer1, voucher, signature);
-        vm.stopPrank();
-        
-        assertTrue(presale.totalPurchased(buyer1) > 0, "Token purchase should succeed at limit");
-    }
+    vm.startPrank(buyer1);
+    mockUSDC.approve(address(presale), largeAmount);
     
-    function testMultiplePurchasesAccumulateCorrectly() public {
-        _startPresale();
-        
-        // Make first purchase: $3,000
-        uint256 firstAmount = 3000 * 1e6;
-        vm.startPrank(buyer1);
-        mockUSDC.approve(address(presale), firstAmount);
-        
-        Authorizer.Voucher memory voucher1 = _createVoucher(buyer1, buyer1, address(mockUSDC), 0);
-        presale.buyWithTokenVoucher(address(mockUSDC), firstAmount, buyer1, voucher1, _signVoucher(voucher1));
-        vm.stopPrank();
-        
-        uint256 tokensAfterFirst = presale.totalPurchased(buyer1);
-        
-        // Make second purchase: $3,000 (total should be $6,000)
-        uint256 secondAmount = 3000 * 1e6;
-        vm.startPrank(buyer1);
-        mockUSDC.approve(address(presale), secondAmount);
-        
-        Authorizer.Voucher memory voucher2 = _createVoucher(buyer1, buyer1, address(mockUSDC), 1);
-        presale.buyWithTokenVoucher(address(mockUSDC), secondAmount, buyer1, voucher2, _signVoucher(voucher2));
-        vm.stopPrank();
-        
-        uint256 tokensAfterSecond = presale.totalPurchased(buyer1);
-        assertTrue(tokensAfterSecond > tokensAfterFirst, "Tokens should accumulate");
-        
-        // Third purchase should exceed limit ($6,000 + $5,000 = $11,000 > $10,000)
-        uint256 thirdAmount = 5000 * 1e6;
-        vm.startPrank(buyer1);
-        mockUSDC.approve(address(presale), thirdAmount);
-
-        // Create voucher with higher limit to test per-user cap instead of voucher limit
-        Authorizer.Voucher memory voucher3 = Authorizer.Voucher({
-            buyer: buyer1,
-            beneficiary: buyer1,
-            paymentToken: address(mockUSDC),
-            usdLimit: 15000 * 1e8, // $15,000 limit to exceed per-user cap of $10,000
-            nonce: 2,
-            deadline: type(uint256).max,
-            presale: address(presale)
-        });
-        bytes memory signature3 = _signVoucher(voucher3);
-
-        vm.expectRevert("Exceeds per-user cap");
-        presale.buyWithTokenVoucher(address(mockUSDC), thirdAmount, buyer1, voucher3, signature3);
-        vm.stopPrank();
-    }
+    // Create voucher with $50,000 limit (not $10k default)
+    Authorizer.Voucher memory voucher = Authorizer.Voucher({
+        buyer: buyer1,
+        beneficiary: buyer1,
+        paymentToken: address(mockUSDC),
+        usdLimit: 50000 * 1e8, // ✅ $50,000 voucher limit
+        nonce: 0,
+        deadline: type(uint256).max,
+        presale: address(presale)
+    });
+    
+    bytes memory signature = _signVoucher(voucher);
+    
+    // Should succeed - no per-user limit in contract
+    presale.buyWithTokenVoucher(address(mockUSDC), largeAmount, buyer1, voucher, signature);
+    vm.stopPrank();
+    
+    assertTrue(presale.totalPurchased(buyer1) > 0);
+    assertEq(mockUSDC.balanceOf(address(presale)), largeAmount);
+}
     
     /// @notice Test that presaleEndTime is not overwritten after presale ends
     /// @dev This test demonstrates the GRO-05 fix prevents repeated overwrites of presaleEndTime
