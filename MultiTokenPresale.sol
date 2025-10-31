@@ -548,15 +548,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Apply configured gas buffer (if any) to keep allocation independent from tx.gasprice
         uint256 paymentAmount = _applyGasBuffer(msg.value);
         
-        // Calculate 4% treasury fee
-        uint256 treasuryFee = (paymentAmount * 4) / 100;
-        uint256 amountAfterFee = paymentAmount - treasuryFee;
-        
-        // Transfer treasury fee immediately
-        payable(treasury).transfer(treasuryFee);
-        
-        // Calculate USD amount for authorization (8 decimals) using amount after fee
-        uint256 usdAmount = (amountAfterFee * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
+        // Calculate USD amount for authorization (8 decimals) - user gets tokens for full amount
+        uint256 usdAmount = (paymentAmount * nativePrice.priceUSD) / (10 ** nativePrice.decimals);
         require(usdAmount > 0, "Payment amount too small");
         
         // GRO-19: In-contract replay protection (defense-in-depth)
@@ -571,9 +564,14 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         usedVoucherHashes[voucherHash] = true;
         emit VoucherHashConsumed(voucherHash, voucher.buyer);
         
-        uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, amountAfterFee, beneficiary, usdAmount);
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, paymentAmount, beneficiary, usdAmount);
         require(tokenAmount > 0, "Token amount too small");
-        _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, amountAfterFee, tokenAmount, voucher);
+        
+        // Calculate and transfer 4% treasury fee (using 400/10000 for better precision)
+        uint256 treasuryFee = (paymentAmount * 400) / 10000;
+        payable(treasury).transfer(treasuryFee);
+        
+        _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
     }
     
     /// @notice Purchase with ERC20 tokens using voucher authorization (KYC-AUTHORIZED DELEGATED PURCHASES)
@@ -612,15 +610,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Transfer and calculate actual received amount
         uint256 actualAmount = _transferAndCalculateActualAmount(token, amount);
         
-        // Calculate 4% treasury fee
-        uint256 treasuryFee = (actualAmount * 4) / 100;
-        uint256 amountAfterFee = actualAmount - treasuryFee;
-        
-        // Transfer treasury fee immediately
-        IERC20(token).safeTransfer(treasury, treasuryFee);
-        
-        // Calculate USD amount based on amount after fee (8 decimals)
-        uint256 usdAmount = (amountAfterFee * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
+        // Calculate USD amount based on actual received amount (8 decimals) - user gets tokens for full amount
+        uint256 usdAmount = (actualAmount * tokenPrice.priceUSD) / (10 ** tokenPrice.decimals);
         require(usdAmount > 0, "Payment amount too small");
         
         // GRO-19: In-contract replay protection (defense-in-depth)
@@ -634,11 +625,15 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         usedVoucherHashes[voucherHash] = true;
         emit VoucherHashConsumed(voucherHash, voucher.buyer);
         
-        // Calculate token amount based on amount after fee
-        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, amountAfterFee, beneficiary, usdAmount);
+        // Calculate token amount based on actual received amount
+        uint256 tokenAmount = _calculateTokenAmountForVoucher(token, actualAmount, beneficiary, usdAmount);
         require(tokenAmount > 0, "Token amount too small");
         
-        _processVoucherPurchase(beneficiary, token, amountAfterFee, tokenAmount, voucher);
+        // Calculate and transfer 4% treasury fee (using 400/10000 for better precision)
+        uint256 treasuryFee = (actualAmount * 400) / 10000;
+        IERC20(token).safeTransfer(treasury, treasuryFee);
+        
+        _processVoucherPurchase(beneficiary, token, actualAmount, tokenAmount, voucher);
     }
     
     // ============ INTERNAL FUNCTIONS ============

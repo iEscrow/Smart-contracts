@@ -519,8 +519,9 @@ contract MultiTokenPresaleTest is Test {
         // Verify tokens allocated
         assertTrue(presale.totalPurchased(buyer1) > 0);
         
-        // Verify USDC transferred to presale
-        assertEq(mockUSDC.balanceOf(address(presale)), usdcAmount);
+        // Verify USDC transferred to presale (96% after 4% treasury fee)
+        uint256 expectedBalance = (usdcAmount * 9600) / 10000;
+        assertEq(mockUSDC.balanceOf(address(presale)), expectedBalance);
     }
     
     function testPurchaseWithWBTC() public {
@@ -532,8 +533,9 @@ contract MultiTokenPresaleTest is Test {
         // Verify tokens allocated
         assertTrue(presale.totalPurchased(buyer1) > 0);
         
-        // Verify WBTC transferred
-        assertEq(mockWBTC.balanceOf(address(presale)), wbtcAmount);
+        // Verify WBTC transferred (96% after 4% treasury fee)
+        uint256 expectedBalance = (wbtcAmount * 9600) / 10000;
+        assertEq(mockWBTC.balanceOf(address(presale)), expectedBalance);
     }
     
     function testPurchaseWithWETH() public {
@@ -545,8 +547,9 @@ contract MultiTokenPresaleTest is Test {
         // Verify tokens allocated
         assertTrue(presale.totalPurchased(buyer1) > 0);
         
-        // Verify WETH transferred
-        assertEq(mockWETH.balanceOf(address(presale)), wethAmount);
+        // Verify WETH transferred (96% after 4% treasury fee)
+        uint256 expectedBalance = (wethAmount * 9600) / 10000;
+        assertEq(mockWETH.balanceOf(address(presale)), expectedBalance);
     }
     
     // ========== USDT COMPATIBILITY TESTS ==========
@@ -568,7 +571,9 @@ contract MultiTokenPresaleTest is Test {
         
         // Verify purchase successful (SafeERC20 handles non-standard USDT)
         assertTrue(presale.totalPurchased(buyer1) > 0);
-        assertEq(mockUSDT.balanceOf(address(presale)), usdtAmount);
+        // Verify USDT transferred (96% after 4% treasury fee)
+        uint256 expectedBalance = (usdtAmount * 9600) / 10000;
+        assertEq(mockUSDT.balanceOf(address(presale)), expectedBalance);
     }
     
     function testMultipleUSDTPurchases() public {
@@ -593,7 +598,9 @@ contract MultiTokenPresaleTest is Test {
         
         // Verify accumulation
         assertTrue(presale.totalPurchased(buyer1) > tokensAfterFirst);
-        assertEq(mockUSDT.balanceOf(address(presale)), firstAmount + secondAmount);
+        // Verify USDT balance (96% after 4% treasury fee)
+        uint256 expectedBalance = ((firstAmount + secondAmount) * 9600) / 10000;
+        assertEq(mockUSDT.balanceOf(address(presale)), expectedBalance);
     }
     
     // ========== DECIMAL HANDLING TESTS ==========
@@ -713,7 +720,9 @@ contract MultiTokenPresaleTest is Test {
     vm.stopPrank();
     
     assertTrue(presale.totalPurchased(buyer1) > 0);
-    assertEq(mockUSDC.balanceOf(address(presale)), largeAmount);
+    // Verify USDC balance (96% after 4% treasury fee)
+    uint256 expectedBalance = (largeAmount * 9600) / 10000;
+    assertEq(mockUSDC.balanceOf(address(presale)), expectedBalance);
 }
     
     /// @notice Test that presaleEndTime is not overwritten after presale ends
