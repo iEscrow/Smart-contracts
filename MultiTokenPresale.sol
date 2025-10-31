@@ -16,6 +16,7 @@ import "./Authorizer.sol";
  * - UnityPresaleV2.sol: Enforces beneficiary == msg.sender (no delegated purchases)
  * - MultiTokenPresale.sol: Allows delegated purchases ONLY through authorized vouchers
  * - This ensures consistent validation across the presale system
+ * 
  */
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -40,10 +41,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     address public treasury;
     address public pendingTreasury;
     
-    // Governance executor (supports timelock or multisig)
-    address public governanceExecutor;
-    address public pendingGovernanceExecutor;
-    bool public governanceExecutorActive;
+    // GRO-06 Fix: Fixed gas buffer (not tx.gasprice dependent)
+    uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
     
     // Price management
     mapping(address => TokenPrice) public tokenPrices;
@@ -130,10 +129,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event VoucherHashConsumed(bytes32 indexed voucherHash, address indexed buyer);
     event TreasuryUpdateRequested(address indexed newTreasury);
     event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
-    event GovernanceExecutorActivated(address indexed executor);
-    event GovernanceExecutorUpdateRequested(address indexed newExecutor);
-    event GovernanceExecutorUpdated(address indexed previousExecutor, address indexed newExecutor);
-    event GovernanceExecutorDeactivated(address indexed previousExecutor);
     
     constructor(
         address _presaleToken,
@@ -155,62 +150,10 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     // ============ MODIFIERS ============
-    
+    // GRO-02: All sensitive functions restricted to owner (hardware wallet)
     modifier onlyGovernance() {
-        if (governanceExecutorActive) {
-            require(msg.sender == governanceExecutor, "Governance: executor only");
-        } else {
-            require(msg.sender == owner(), "Governance: owner only");
-        }
+        require(msg.sender == owner(), "Only owner");
         _;
-    }
-
-    // ============ GOVERNANCE CONFIGURATION ============
-
-    /// @notice Activates governance executor routing (e.g., timelock or multisig)
-    /// @dev Can only be called while governance executor is inactive
-    function activateGovernanceExecutor(address executor) external onlyGovernance {
-        require(!governanceExecutorActive, "Governance already active");
-        require(executor != address(0), "Invalid executor");
-        require(executor.code.length > 0, "Executor must be contract");
-
-        governanceExecutor = executor;
-        governanceExecutorActive = true;
-
-        emit GovernanceExecutorActivated(executor);
-    }
-
-    /// @notice Propose a new governance executor. Requires confirmation by the proposed executor.
-    function proposeGovernanceExecutor(address newExecutor) external onlyGovernance {
-        require(newExecutor != address(0), "Invalid executor");
-        require(newExecutor.code.length > 0, "Executor must be contract");
-
-        pendingGovernanceExecutor = newExecutor;
-        emit GovernanceExecutorUpdateRequested(newExecutor);
-    }
-
-    /// @notice Accept the governance executor role.
-    function acceptGovernanceExecutor() external {
-        require(msg.sender == pendingGovernanceExecutor, "Caller not pending executor");
-
-        address previousExecutor = governanceExecutor;
-        governanceExecutor = pendingGovernanceExecutor;
-        pendingGovernanceExecutor = address(0);
-        governanceExecutorActive = true;
-
-        emit GovernanceExecutorUpdated(previousExecutor, governanceExecutor);
-    }
-
-    /// @notice Deactivate governance executor routing, falling back to the contract owner.
-    function deactivateGovernanceExecutor() external onlyGovernance {
-        require(governanceExecutorActive, "Governance inactive");
-
-        address previousExecutor = governanceExecutor;
-        governanceExecutor = address(0);
-        pendingGovernanceExecutor = address(0);
-        governanceExecutorActive = false;
-
-        emit GovernanceExecutorDeactivated(previousExecutor);
     }
 
     /// @notice Propose a new treasury address that will custody withdrawn funds.
@@ -380,7 +323,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         emit PresaleStarted(escrowPresaleStartTime, escrowPresaleEndTime);
         emit AutoStartTriggered(block.timestamp);
-        _handleRoundTransition(0, 1);
+        emit RoundAdvanced(0, 1, block.timestamp);
     }
     
     function endPresale() external onlyGovernance {
@@ -692,6 +635,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
         actualAmount = balanceAfter - balanceBefore;
         require(actualAmount > 0, "No tokens received");
+        
+        // GRO-09: Reject deflationary tokens
+        require(actualAmount == amount, "Deflationary token not supported");
     }
     
     function _ensurePresaleActive() internal view {
