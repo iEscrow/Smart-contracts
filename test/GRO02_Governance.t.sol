@@ -48,7 +48,8 @@ contract GRO02_Governance is Test {
         presale = new MultiTokenPresale(
             address(token),
             666666666666666667000,
-            5_000_000_000 * 1e18
+            5_000_000_000 * 1e18,
+            address(0x999)
         );
         
         // Transfer tokens from owner

@@ -49,7 +49,8 @@ contract AuthorizerIntegrationTest is Test {
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_TOKENS
+            MAX_TOKENS,
+            address(0x999)
         );
         
         // Set up presale
