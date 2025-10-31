@@ -55,7 +55,8 @@ contract GRO07AuditFixTest is Test {
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_TOKENS
+            MAX_TOKENS,
+            address(0x999)
         );
         
         // Setup USDC token with standard price

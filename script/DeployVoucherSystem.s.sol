@@ -11,6 +11,7 @@ contract DeployVoucherSystem is Script {
     address public constant OWNER = 0x1234567890123456789012345678901234567890; // Replace with actual owner
     address public constant BACKEND_SIGNER = 0x2345678901234567890123456789012345678901; // Replace with actual backend signer
     address public constant STAKING_CONTRACT = 0x3456789012345678901234567890123456789012; // Replace with actual staking contract
+    address public constant DEV_TREASURY = 0x4567890123456789012345678901234567890123; // Replace with actual dev treasury (receives 4% fee)
     
     // Presale parameters
     uint256 public constant PRESALE_RATE = 666666666666666666; // 666.666... tokens per USD (18 decimals)
@@ -39,7 +40,8 @@ contract DeployVoucherSystem is Script {
         MultiTokenPresale presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_PRESALE_TOKENS
+            MAX_PRESALE_TOKENS,
+            DEV_TREASURY
         );
         console.log("MultiTokenPresale deployed at:", address(presale));
         
@@ -101,7 +103,8 @@ contract DeployVoucherSystem is Script {
         MultiTokenPresale presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_PRESALE_TOKENS
+            MAX_PRESALE_TOKENS,
+            testOwner // Use test owner as dev treasury for testnet
         );
         
         // Configure presale

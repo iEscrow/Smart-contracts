@@ -154,6 +154,7 @@ contract MultiTokenPresaleTest is Test {
     address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public buyer1 = address(0x3);
     address public buyer2 = address(0x4);
+    address public devTreasury = address(0x999);  // Dev treasury for 4% fee
     address public staking;
     
     // Mock tokens for testing
@@ -183,7 +184,8 @@ contract MultiTokenPresaleTest is Test {
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
-            MAX_TOKENS
+            MAX_TOKENS,
+            devTreasury
         );
         
         // Set up presale

@@ -49,6 +49,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     address public treasury;
     address public pendingTreasury;
     
+    // Dev treasury - incentives for developers who contributed to this project (receives 4% fee)
+    address public immutable devTreasury;
+    
     // GRO-06 Fix: Fixed gas buffer (not tx.gasprice dependent)
     uint256 public gasBuffer = 0.0005 ether; // Default 0.0005 ETH buffer
     
@@ -141,11 +144,13 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     constructor(
         address _presaleToken,
         uint256 _presaleRate, // 0.0015 dollar per token => 666.666... tokens per USD with 18 decimals: ~666666666666666667000
-        uint256 _maxTokensToMint // 5 billion tokens to presale
+        uint256 _maxTokensToMint, // 5 billion tokens to presale
+        address _devTreasury // Dev treasury address for 4% fee (immutable)
     ) Ownable(OWNER_ADDRESS) {
         require(_presaleToken != address(0), "Invalid presale token");
         require(_presaleRate > 0, "Invalid presale rate");
         require(_maxTokensToMint > 0, "Invalid max tokens");
+        require(_devTreasury != address(0), "Invalid dev treasury");
         
         presaleToken = IERC20(_presaleToken);
         presaleRate = _presaleRate;
@@ -156,6 +161,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // GRO-02: Treasury is same as owner (hardcoded hardware wallet)
         treasury = OWNER_ADDRESS;
+        
+        // Dev treasury for 4% fee (set in constructor, immutable)
+        devTreasury = _devTreasury;
     }
     
     // ============ MODIFIERS ============
@@ -567,10 +575,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount = _calculateTokenAmountForVoucher(NATIVE_ADDRESS, paymentAmount, beneficiary, usdAmount);
         require(tokenAmount > 0, "Token amount too small");
         
-        // Calculate and transfer 4% treasury fee (using 400/10000 for better precision)
-        uint256 treasuryFee = (paymentAmount * 400) / 10000;
-        payable(treasury).transfer(treasuryFee);
-        
+        // Calculate and transfer 4% fee to dev treasury (using 400/10000 for better precision)
+        uint256 devFee = (paymentAmount * 400) / 10000;
+        payable(devTreasury).transfer(devFee);
         _processVoucherPurchase(beneficiary, NATIVE_ADDRESS, paymentAmount, tokenAmount, voucher);
     }
     
@@ -629,10 +636,9 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount = _calculateTokenAmountForVoucher(token, actualAmount, beneficiary, usdAmount);
         require(tokenAmount > 0, "Token amount too small");
         
-        // Calculate and transfer 4% treasury fee (using 400/10000 for better precision)
-        uint256 treasuryFee = (actualAmount * 400) / 10000;
-        IERC20(token).safeTransfer(treasury, treasuryFee);
-        
+        // Calculate and transfer 4% fee to dev treasury (using 400/10000 for better precision)
+        uint256 devFee = (actualAmount * 400) / 10000;
+        IERC20(token).safeTransfer(devTreasury, devFee);
         _processVoucherPurchase(beneficiary, token, actualAmount, tokenAmount, voucher);
     }
     
