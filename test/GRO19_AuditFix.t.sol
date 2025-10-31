@@ -13,7 +13,8 @@ contract GRO19_AuditFixTest is Test {
     EscrowToken public escrowToken;
     Authorizer public authorizer;
     
-    address public owner = address(0x1);
+    // GRO-02: Use hardcoded owner address from contract
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public user1 = address(0x2);
     address public treasury = address(0x4);
     address public staking = address(0x5);

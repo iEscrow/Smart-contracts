@@ -31,7 +31,8 @@ contract GRO02_Governance is Test {
     MultiTokenPresale public presale;
     MockToken public token;
     
-    address public owner;
+    // GRO-02: Use hardcoded owner address from contract
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public attacker;
     address public governanceContract;
     
@@ -39,7 +40,6 @@ contract GRO02_Governance is Test {
     receive() external payable {}
     
     function setUp() public {
-        owner = address(this);
         attacker = makeAddr("attacker");
         governanceContract = makeAddr("governanceContract");
         vm.etch(governanceContract, hex"00"); // Make it a contract
@@ -51,6 +51,8 @@ contract GRO02_Governance is Test {
             5_000_000_000 * 1e18
         );
         
+        // Transfer tokens from owner
+        vm.prank(address(this));
         token.transfer(address(presale), 5_000_000_000 * 1e18);
         vm.deal(address(presale), 10 ether);
     }
@@ -60,11 +62,13 @@ contract GRO02_Governance is Test {
     function test_Owner_CanCallSensitiveFunctions() public {
         // Owner (hardware wallet) can call all governance functions
         // Each call requires physical confirmation on the hardware device
+        vm.startPrank(owner);
         presale.setGasBuffer(0.001 ether);
         
         MockToken paymentToken = new MockToken();
         paymentToken.transfer(address(presale), 1000 * 1e18);
         presale.withdrawToken(address(paymentToken));
+        vm.stopPrank();
         
         console.log("[GRO-02] Owner (hardware wallet) can execute sensitive functions");
         console.log("         Each operation requires physical device confirmation");
@@ -98,6 +102,7 @@ contract GRO02_Governance is Test {
     
     function test_OnlyOwner_CanModifyGasBuffer() public {
         // Owner can modify gas buffer
+        vm.prank(owner);
         presale.setGasBuffer(0.001 ether);
         assertEq(presale.gasBuffer(), 0.001 ether);
         
@@ -109,9 +114,11 @@ contract GRO02_Governance is Test {
         
         address treasury = presale.treasury();
         uint256 balanceBefore = treasury.balance;
-        presale.withdrawNative();
-        uint256 balanceAfter = treasury.balance;
         
+        vm.prank(owner);
+        presale.withdrawNative();
+        
+        uint256 balanceAfter = treasury.balance;
         assertEq(balanceAfter - balanceBefore, 1 ether);
         console.log("[GRO-02] Owner (hardware wallet) can withdraw funds");
     }
@@ -159,6 +166,8 @@ contract GRO02_Governance is Test {
         console.log("         Every operation below requires physical device confirmation");
         console.log("");
         
+        vm.startPrank(owner);
+        
         // Price update
         presale.setTokenPrice(address(0), 5000 * 1e8, 18, true);
         console.log("         [OK] Price update confirmed on hardware device");
@@ -173,6 +182,8 @@ contract GRO02_Governance is Test {
         
         presale.unpause();
         console.log("         [OK] Unpause confirmed on hardware device");
+        
+        vm.stopPrank();
         
         console.log("");
         console.log("         [OK] All operations protected by physical 2FA");

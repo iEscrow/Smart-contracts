@@ -11,7 +11,8 @@ contract AuthorizerIntegrationTest is Test {
     MultiTokenPresale public presale;
     EscrowToken public escrowToken;
     
-    address public owner = address(0x1);
+    // GRO-02: Use hardcoded owner address from contract
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public buyer = address(0x3);
     address public beneficiary = address(0x4);
     address public unauthorized = address(0x5);
