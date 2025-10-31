@@ -29,7 +29,8 @@ contract GRO07AuditFixTest is Test {
     EscrowToken escrowToken;
     MockERC20 usdc;
     
-    address owner = address(0x1);
+    // GRO-02: Use hardcoded owner address from contract
+    address owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address buyer = address(0x2);
     address treasury = address(0x3);
     address staking = address(0x4);

@@ -28,12 +28,12 @@ contract GRO06_GasBuffer is Test {
     MultiTokenPresale public presale;
     MockToken public token;
     
-    address public owner;
+    // GRO-02: Use hardcoded owner address from contract
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public buyer1;
     address public buyer2;
     
     function setUp() public {
-        owner = address(this);
         buyer1 = makeAddr("buyer1");
         buyer2 = makeAddr("buyer2");
         
@@ -44,6 +44,8 @@ contract GRO06_GasBuffer is Test {
             5_000_000_000 * 1e18
         );
         
+        // Transfer tokens from test contract
+        vm.prank(address(this));
         token.transfer(address(presale), 5_000_000_000 * 1e18);
         
         vm.deal(buyer1, 100 ether);
@@ -74,6 +76,7 @@ contract GRO06_GasBuffer is Test {
         uint256 oldBuffer = presale.gasBuffer();
         uint256 newBuffer = 0.001 ether;
         
+        vm.prank(owner);
         presale.setGasBuffer(newBuffer);
         
         assertEq(presale.gasBuffer(), newBuffer, "Buffer should update");
@@ -167,6 +170,7 @@ contract GRO06_GasBuffer is Test {
     // ============ ZERO BUFFER EDGE CASE ============
     
     function test_ZeroBuffer_FullPayment() public {
+        vm.prank(owner);
         presale.setGasBuffer(0);
         
         uint256 purchaseAmount = 1 ether;

@@ -20,6 +20,14 @@ import "./Authorizer.sol";
  */
 contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
+    
+    // GRO-02: Hardcoded owner/treasury address (hardware wallet)
+    // Security rationale: 1 hardware wallet > 2-of-3 multisig with hot wallets
+    // - Hardware wallet keys never exposed to internet (physical 2FA)
+    // - Multisig with 2 hot wallets = increased attack surface
+    // - If 2 multisig keys lost = funds lost forever
+    address public constant OWNER_ADDRESS = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
+    
     // Token price structure
     struct TokenPrice {
         uint256 priceUSD;        // Price in USD (8 decimals)
@@ -134,7 +142,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         address _presaleToken,
         uint256 _presaleRate, // 0.0015 dollar per token => 666.666... tokens per USD with 18 decimals: ~666666666666666667000
         uint256 _maxTokensToMint // 5 billion tokens to presale
-    ) Ownable(msg.sender) {
+    ) Ownable(OWNER_ADDRESS) {
         require(_presaleToken != address(0), "Invalid presale token");
         require(_presaleRate > 0, "Invalid presale rate");
         require(_maxTokensToMint > 0, "Invalid max tokens");
@@ -146,7 +154,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         // Initialize default token prices and limits
         _initializeDefaultTokens();
         
-        treasury = msg.sender;
+        // GRO-02: Treasury is same as owner (hardcoded hardware wallet)
+        treasury = OWNER_ADDRESS;
     }
     
     // ============ MODIFIERS ============
