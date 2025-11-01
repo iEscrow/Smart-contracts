@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IMultiTokenPresale {
     function presaleEnded() external view returns (bool);
@@ -20,7 +21,7 @@ interface IMultiTokenPresale {
  * - 12.5% → Developer 3 (0.5% of total presale)
  * - 25% → Developer 4 (1% of total presale)
  */
-contract DevTreasury {
+contract DevTreasury is ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     // ============ IMMUTABLE ADDRESSES ============
@@ -69,7 +70,7 @@ contract DevTreasury {
     
     /// @notice Withdraw and distribute ETH to all developers
     /// @dev Can be called by anyone after presale ends
-    function withdrawETH() external {
+    function withdrawETH() external nonReentrant {
         require(presale.presaleEnded() || presale.escrowPresaleEnded(), "Presale not ended");
         require(!withdrawn[address(0)], "ETH already withdrawn");
         
@@ -96,7 +97,7 @@ contract DevTreasury {
     /// @notice Withdraw and distribute ERC20 tokens to all developers
     /// @dev Can be called by anyone after presale ends
     /// @param token ERC20 token address to withdraw
-    function withdrawToken(address token) external {
+    function withdrawToken(address token) external nonReentrant {
         require(presale.presaleEnded() || presale.escrowPresaleEnded(), "Presale not ended");
         require(token != address(0), "Invalid token address");
         require(!withdrawn[token], "Token already withdrawn");
