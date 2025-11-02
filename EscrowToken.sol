@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
 
 /// @title EscrowToken - The utility token for the iEscrow ecosystem
 /// @notice Standard ERC20 with 18 decimals, ERC20Permit for gasless approvals, and burnable tokens
@@ -26,6 +25,8 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     uint256 public constant MARKETING_ALLOCATION = 3_400_000_000 * 1e18; // 3.4 billion for marketing/partnerships
     /// @notice Allocation for initial DEX liquidity
     uint256 public constant LIQUIDITY_ALLOCATION = 5_000_000_000 * 1e18; // 5 billion for liquidity provision
+    /// @notice Allocation for team vesting
+    uint256 public constant TEAM_VESTING_ALLOCATION = 1_000_000_000 * 1e18; // 1 billion for team vesting
     
     /// @notice Wallet receiving the marketing/partnership allocation
     address public constant MARKETING_WALLET = 0xa315b46cA80982278eD28A3496718B1524Df467b;
@@ -40,10 +41,14 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     bool public mintingFinalized;
     /// @notice Whether the presale allocation has been minted
     bool public presaleAllocationMinted;
+    /// @notice Whether the team vesting allocation has been minted
+    bool public teamVestingAllocationMinted;
     /// @notice Flag signalling bootstrap phase is complete and owner minting is disabled
     bool public bootstrapComplete;
     /// @notice Address of the staking contract that is allowed to mint rewards
     address public stakingContract;
+    /// @notice Address of the team vesting contract
+    address public teamVestingContract;
     
     // ============ EVENTS ============
     
@@ -53,6 +58,13 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @param presaleContract The address of the presale contract
     /// @param amount The amount of tokens minted
     event PresaleAllocationMinted(address indexed presaleContract, uint256 amount);
+    /// @notice Emitted when team vesting contract is set
+    /// @param vestingContract The address of the team vesting contract
+    event TeamVestingContractSet(address indexed vestingContract);
+    /// @notice Emitted when team vesting allocation is minted
+    /// @param vestingContract The address of the vesting contract
+    /// @param amount The amount of tokens minted
+    event TeamVestingAllocationMinted(address indexed vestingContract, uint256 amount);
     /// @notice Emitted when emergency withdrawal occurs
     /// @param token The address of the withdrawn token (0 for ETH)
     /// @param to The address receiving the withdrawal
@@ -96,6 +108,30 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     }
     
     // ============ MINTING FUNCTIONS ============
+    
+    /// @notice Set the team vesting contract address (one-time only)
+    /// @param _vestingContract Address of the TokenVesting contract
+    function setTeamVestingContract(address _vestingContract) external onlyOwner onlyBeforeBootstrap {
+        require(_vestingContract != address(0), "Invalid vesting contract");
+        require(teamVestingContract == address(0), "Team vesting contract already set");
+        
+        teamVestingContract = _vestingContract;
+        emit TeamVestingContractSet(_vestingContract);
+    }
+    
+    /// @notice Mint the team vesting allocation (1B tokens)
+    /// @dev Can only be called after team vesting contract is set
+    function mintTeamVestingAllocation() external onlyOwner onlyBeforeBootstrap {
+        require(teamVestingContract != address(0), "Team vesting contract not set");
+        require(!teamVestingAllocationMinted, "Team vesting allocation already minted");
+        require(!mintingFinalized, "Minting finalized");
+        
+        teamVestingAllocationMinted = true;
+        totalMinted += TEAM_VESTING_ALLOCATION;
+        
+        _mint(teamVestingContract, TEAM_VESTING_ALLOCATION);
+        emit TeamVestingAllocationMinted(teamVestingContract, TEAM_VESTING_ALLOCATION);
+    }
     
     /// @notice Mint the presale allocation (5B tokens), set staking contract, and complete bootstrap
     /// @param presaleContract Address of the presale contract
@@ -161,6 +197,12 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         return presaleAllocationMinted;
     }
     
+    /// @notice Check if team vesting allocation has been minted
+    /// @return Whether the team vesting allocation has been minted
+    function isTeamVestingAllocationMinted() external view returns (bool) {
+        return teamVestingAllocationMinted;
+    }
+    
     /// @notice Get comprehensive token distribution information
     /// @return tokenName Name of the token
     /// @return tokenSymbol Symbol of the token
@@ -213,7 +255,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         uint256 balance = address(this).balance;
         require(balance > 0, "No ETH to withdraw");
         
-        Address.sendValue(payable(to), balance);
+        to.transfer(balance);
         emit EmergencyWithdrawal(address(0), to, balance);
     }
     

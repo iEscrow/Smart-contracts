@@ -113,7 +113,7 @@ contract DeployVoucherSystem is Script {
         
         // Mint tokens
         address testStaking = testOwner; // Replace if a dedicated staking contract is deployed on testnet
-        escrowToken.mintPresaleAllocation(address(presale), testStaking);
+        escrowToken.mintPresaleAllocation(address(presale), STAKING_CONTRACT);
         
         // For testnet, start presale immediately
         presale.startPresale(34 days);

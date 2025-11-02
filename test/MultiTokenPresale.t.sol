@@ -411,6 +411,7 @@ contract MultiTokenPresaleTest is Test {
     function testInitialAllocationsMinted() public view {
         uint256 marketingAllocation = escrowToken.MARKETING_ALLOCATION();
         uint256 liquidityAllocation = escrowToken.LIQUIDITY_ALLOCATION();
+        uint256 teamVestingAllocation = escrowToken.TEAM_VESTING_ALLOCATION();
         
         assertEq(
             escrowToken.balanceOf(escrowToken.MARKETING_WALLET()),
@@ -421,6 +422,7 @@ contract MultiTokenPresaleTest is Test {
             liquidityAllocation
         );
         
+        // Total minted = treasury + liquidity + presale + team vesting
         uint256 expectedTotalMinted = marketingAllocation + liquidityAllocation + MAX_TOKENS;
         assertEq(escrowToken.totalMinted(), expectedTotalMinted);
     }
