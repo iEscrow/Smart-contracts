@@ -845,6 +845,68 @@ contract MultiTokenPresaleTest is Test {
         presale.buyWithTokenVoucher(address(mockDeflationaryToken), purchaseAmount, buyer1, voucher, signature);
         vm.stopPrank();
     }
+    
+    // ========== BURN UNSOLD TOKENS TESTS ==========
+    
+    function testOwnerCanBurnUnsoldTokens() public {
+        _startPresale();
+        
+        // Make small purchase (leaving most tokens unsold)
+        _makePurchase(buyer1, 0.1 ether, 0);
+        
+        uint256 balanceBeforeBurn = escrowToken.balanceOf(address(presale));
+        assertTrue(balanceBeforeBurn > 0, "Should have unsold tokens");
+        
+        // End presale using emergency function
+        vm.prank(owner);
+        presale.emergencyEndEscrowPresale();
+        
+        // Burn unsold tokens
+        vm.prank(owner);
+        presale.burnUnsoldTokens();
+        
+        // Verify all presale tokens are burned
+        assertEq(escrowToken.balanceOf(address(presale)), 0, "All unsold tokens should be burned");
+    }
+    
+    function testCannotBurnBeforePresaleEnds() public {
+        _startPresale();
+        
+        // Try to burn while presale is active
+        vm.expectRevert("Presale must be ended first");
+        vm.prank(owner);
+        presale.burnUnsoldTokens();
+    }
+    
+    function testCannotBurnIfNoTokens() public {
+        _startPresale();
+        
+        // Manually end presale
+        vm.prank(owner);
+        presale.emergencyEndEscrowPresale();
+        
+        // Transfer all presale tokens out (simulating all sold)
+        uint256 balance = escrowToken.balanceOf(address(presale));
+        vm.prank(address(presale));
+        escrowToken.transfer(owner, balance);
+        
+        // Try to burn when no tokens left
+        vm.expectRevert("No tokens to burn");
+        vm.prank(owner);
+        presale.burnUnsoldTokens();
+    }
+    
+    function testNonOwnerCannotBurnTokens() public {
+        _startPresale();
+        
+        vm.prank(owner);
+        presale.emergencyEndEscrowPresale();
+        
+        // Non-owner tries to burn
+        vm.expectRevert();
+        vm.prank(buyer1);
+        presale.burnUnsoldTokens();
+    }
 
 
     function _startPresale() internal {
