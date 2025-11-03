@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 
 /// @title EscrowToken - The utility token for the iEscrow ecosystem
 /// @notice Standard ERC20 with 18 decimals, ERC20Permit for gasless approvals, and burnable tokens
@@ -49,6 +50,8 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     address public stakingContract;
     /// @notice Address of the team vesting contract
     address public teamVestingContract;
+    /// @notice Address of the presale contract (stored for burning unsold tokens)
+    address public presaleContract;
     
     // ============ EVENTS ============
     
@@ -73,6 +76,9 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @notice Emitted when bootstrap is completed and the staking contract is set
     /// @param staking The staking contract that is now authorised to mint rewards
     event BootstrapCompleted(address indexed staking);
+    /// @notice Emitted when unsold presale tokens are burned
+    /// @param amount The amount of tokens burned
+    event UnsoldPresaleTokensBurned(uint256 amount);
 
     modifier onlyBeforeBootstrap() {
         require(!bootstrapComplete, "Bootstrap already completed");
@@ -109,44 +115,39 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     // ============ MINTING FUNCTIONS ============
     
-    /// @notice Set the team vesting contract address (one-time only)
+    /// @notice Set team vesting contract and mint allocation in one transaction
     /// @param _vestingContract Address of the TokenVesting contract
-    function setTeamVestingContract(address _vestingContract) external onlyOwner onlyBeforeBootstrap {
+    function setTeamVestingContractAndMint(address _vestingContract) external onlyOwner {
         require(_vestingContract != address(0), "Invalid vesting contract");
         require(teamVestingContract == address(0), "Team vesting contract already set");
-        
-        teamVestingContract = _vestingContract;
-        emit TeamVestingContractSet(_vestingContract);
-    }
-    
-    /// @notice Mint the team vesting allocation (1B tokens)
-    /// @dev Can only be called after team vesting contract is set
-    function mintTeamVestingAllocation() external onlyOwner onlyBeforeBootstrap {
-        require(teamVestingContract != address(0), "Team vesting contract not set");
         require(!teamVestingAllocationMinted, "Team vesting allocation already minted");
         require(!mintingFinalized, "Minting finalized");
         
+        teamVestingContract = _vestingContract;
         teamVestingAllocationMinted = true;
         totalMinted += TEAM_VESTING_ALLOCATION;
         
-        _mint(teamVestingContract, TEAM_VESTING_ALLOCATION);
-        emit TeamVestingAllocationMinted(teamVestingContract, TEAM_VESTING_ALLOCATION);
+        _mint(_vestingContract, TEAM_VESTING_ALLOCATION);
+        
+        emit TeamVestingContractSet(_vestingContract);
+        emit TeamVestingAllocationMinted(_vestingContract, TEAM_VESTING_ALLOCATION);
     }
     
     /// @notice Mint the presale allocation (5B tokens), set staking contract, and complete bootstrap
-    /// @param presaleContract Address of the presale contract
+    /// @param _presaleContract Address of the presale contract
     /// @param staking Address of the staking contract authorised to mint rewards
-    function mintPresaleAllocation(address presaleContract, address staking) external onlyOwner onlyBeforeBootstrap {
-        require(presaleContract != address(0), "Invalid presale contract");
+    function mintPresaleAllocation(address _presaleContract, address staking) external onlyOwner onlyBeforeBootstrap {
+        require(_presaleContract != address(0), "Invalid presale contract");
         require(staking != address(0), "Invalid staking contract");
         require(!mintingFinalized, "Minting finalized");
         require(!presaleAllocationMinted, "Presale allocation already minted");
         
         presaleAllocationMinted = true;
+        presaleContract = _presaleContract;
         totalMinted += PRESALE_ALLOCATION;
         
-        _mint(presaleContract, PRESALE_ALLOCATION);
-        emit PresaleAllocationMinted(presaleContract, PRESALE_ALLOCATION);
+        _mint(_presaleContract, PRESALE_ALLOCATION);
+        emit PresaleAllocationMinted(_presaleContract, PRESALE_ALLOCATION);
         
         stakingContract = staking;
         bootstrapComplete = true;
@@ -168,6 +169,21 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         _mint(to, amount);
     }
 
+    /// @notice Burn unsold presale tokens after presale ends
+    /// @dev Can only be called by owner, burns tokens from presale contract
+    function burnUnsoldPresaleTokens() external onlyOwner {
+        require(presaleContract != address(0), "Presale contract not set");
+        require(presaleAllocationMinted, "Presale allocation not minted yet");
+        
+        uint256 unsoldAmount = balanceOf(presaleContract);
+        require(unsoldAmount > 0, "No unsold tokens to burn");
+        
+        // Burn tokens from presale contract
+        _burn(presaleContract, unsoldAmount);
+        
+        emit UnsoldPresaleTokensBurned(unsoldAmount);
+    }
+    
     /// @notice Finalize minting - prevents any future minting
     /// @dev Use this after all allocations (presale, team, treasury, LP) are complete
     function finalizeMinting() external onlyOwner {
@@ -255,7 +271,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         uint256 balance = address(this).balance;
         require(balance > 0, "No ETH to withdraw");
         
-        to.transfer(balance);
+        Address.sendValue(payable(to), balance);
         emit EmergencyWithdrawal(address(0), to, balance);
     }
     

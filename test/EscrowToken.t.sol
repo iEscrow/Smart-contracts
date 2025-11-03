@@ -52,56 +52,42 @@ contract EscrowTokenTest is Test {
     
     // ============ TEAM VESTING TESTS ============
     
-    function testOwnerCanSetTeamVestingContract() public {
-        token.setTeamVestingContract(teamVestingContract);
+    function testOwnerCanSetTeamVestingContractAndMint() public {
+        token.setTeamVestingContractAndMint(teamVestingContract);
+        
         assertEq(token.teamVestingContract(), teamVestingContract);
+        assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
+        assertTrue(token.isTeamVestingAllocationMinted());
     }
     
     function testCannotSetTeamVestingContractTwice() public {
-        token.setTeamVestingContract(teamVestingContract);
+        token.setTeamVestingContractAndMint(teamVestingContract);
         
         vm.expectRevert("Team vesting contract already set");
-        token.setTeamVestingContract(address(0x999));
+        token.setTeamVestingContractAndMint(address(0x999));
     }
     
     function testCannotSetZeroAddressAsVestingContract() public {
         vm.expectRevert("Invalid vesting contract");
-        token.setTeamVestingContract(address(0));
+        token.setTeamVestingContractAndMint(address(0));
     }
     
     function testNonOwnerCannotSetVestingContract() public {
         vm.prank(unauthorized);
         vm.expectRevert();
-        token.setTeamVestingContract(teamVestingContract);
+        token.setTeamVestingContractAndMint(teamVestingContract);
     }
     
-    function testOwnerCanMintTeamVestingAllocation() public {
-        token.setTeamVestingContract(teamVestingContract);
-        token.mintTeamVestingAllocation();
-        
-        assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
-        assertTrue(token.isTeamVestingAllocationMinted());
-    }
-    
-    function testCannotMintTeamVestingBeforeSettingContract() public {
-        vm.expectRevert("Team vesting contract not set");
-        token.mintTeamVestingAllocation();
-    }
-    
-    function testCannotMintTeamVestingTwice() public {
-        token.setTeamVestingContract(teamVestingContract);
-        token.mintTeamVestingAllocation();
-        
-        vm.expectRevert("Team vesting allocation already minted");
-        token.mintTeamVestingAllocation();
-    }
-    
-    function testCannotSetVestingContractAfterBootstrap() public {
+    function testCanSetTeamVestingAfterBootstrap() public {
+        // Bootstrap first
         stakingContract = new MockStakingContract(address(token));
         token.mintPresaleAllocation(presaleContract, address(stakingContract));
         
-        vm.expectRevert("Bootstrap already completed");
-        token.setTeamVestingContract(teamVestingContract);
+        // Should still be able to set team vesting after bootstrap
+        token.setTeamVestingContractAndMint(teamVestingContract);
+        
+        assertEq(token.teamVestingContract(), teamVestingContract);
+        assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
     }
     
     // ============ PRESALE ALLOCATION TESTS ============
@@ -153,13 +139,13 @@ contract EscrowTokenTest is Test {
         assertTrue(token.bootstrapComplete());
     }
     
-    function testOwnerCannotMintAfterBootstrap() public {
+    function testOwnerCannotMintPresaleAfterBootstrap() public {
         stakingContract = new MockStakingContract(address(token));
         token.mintPresaleAllocation(presaleContract, address(stakingContract));
         
-        // Owner cannot mint team vesting after bootstrap
+        // Owner cannot mint presale twice
         vm.expectRevert("Bootstrap already completed");
-        token.setTeamVestingContract(teamVestingContract);
+        token.mintPresaleAllocation(presaleContract, address(stakingContract));
     }
     
     // ============ STAKING REWARDS TESTS ============
@@ -226,6 +212,69 @@ contract EscrowTokenTest is Test {
         // This should fail
         vm.expectRevert("Exceeds max supply");
         stakingContract.mintRewards(user, 1);
+    }
+    
+    // ============ PRESALE BURN TESTS ============
+    
+    function testOwnerCanBurnUnsoldPresaleTokens() public {
+        stakingContract = new MockStakingContract(address(token));
+        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        
+        // Presale contract still has 5B tokens
+        assertEq(token.balanceOf(presaleContract), PRESALE_ALLOCATION);
+        
+        // Burn unsold tokens
+        token.burnUnsoldPresaleTokens();
+        
+        // All presale tokens should be burned
+        assertEq(token.balanceOf(presaleContract), 0);
+    }
+    
+    function testCannotBurnBeforePresaleMinted() public {
+        vm.expectRevert("Presale contract not set");
+        token.burnUnsoldPresaleTokens();
+    }
+    
+    function testCannotBurnIfNoUnsoldTokens() public {
+        stakingContract = new MockStakingContract(address(token));
+        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        
+        // First burn should work
+        token.burnUnsoldPresaleTokens();
+        
+        // Second burn should fail - no tokens left
+        vm.expectRevert("No unsold tokens to burn");
+        token.burnUnsoldPresaleTokens();
+    }
+    
+    function testNonOwnerCannotBurnUnsoldTokens() public {
+        stakingContract = new MockStakingContract(address(token));
+        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        
+        vm.prank(unauthorized);
+        vm.expectRevert();
+        token.burnUnsoldPresaleTokens();
+    }
+    
+    function testBurnPartiallyUnsoldTokens() public {
+        stakingContract = new MockStakingContract(address(token));
+        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        
+        // Simulate presale selling 2B tokens (transfer from presale contract)
+        uint256 soldAmount = 2_000_000_000 * 1e18;
+        vm.prank(presaleContract);
+        token.transfer(user, soldAmount);
+        
+        // Should have 3B unsold tokens
+        uint256 unsoldAmount = PRESALE_ALLOCATION - soldAmount;
+        assertEq(token.balanceOf(presaleContract), unsoldAmount);
+        
+        // Burn unsold tokens
+        token.burnUnsoldPresaleTokens();
+        
+        // Presale contract should have 0, user should still have sold amount
+        assertEq(token.balanceOf(presaleContract), 0);
+        assertEq(token.balanceOf(user), soldAmount);
     }
     
     // ============ MINTING FINALIZATION TESTS ============
@@ -300,18 +349,14 @@ contract EscrowTokenTest is Test {
     // ============ INTEGRATION TESTS ============
     
     function testFullDeploymentFlow() public {
-        // 1. Set team vesting contract
-        token.setTeamVestingContract(teamVestingContract);
-        
-        // 2. Mint team vesting allocation
-        token.mintTeamVestingAllocation();
-        assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
-        
-        // 3. Mint presale allocation (completes bootstrap)
+        // 1. Mint presale allocation (completes bootstrap)
         stakingContract = new MockStakingContract(address(token));
         token.mintPresaleAllocation(presaleContract, address(stakingContract));
         
-        // 4. Verify all allocations
+        // 2. Set team vesting contract and mint (can be done after bootstrap)
+        token.setTeamVestingContractAndMint(teamVestingContract);
+        
+        // 3. Verify all allocations
         assertEq(token.balanceOf(token.MARKETING_WALLET()), MARKETING_ALLOCATION);
         assertEq(token.balanceOf(token.LIQUIDITY_WALLET()), LIQUIDITY_ALLOCATION);
         assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
@@ -321,12 +366,16 @@ contract EscrowTokenTest is Test {
                                 TEAM_VESTING_ALLOCATION + PRESALE_ALLOCATION;
         assertEq(token.totalMinted(), expectedTotal);
         
-        // 5. Staking can mint rewards
+        // 4. Staking can mint rewards
         stakingContract.mintRewards(user, 1000 * 1e18);
         assertEq(token.balanceOf(user), 1000 * 1e18);
         
-        // 6. Owner cannot mint anymore
+        // 5. Owner cannot mint presale anymore
         assertTrue(token.bootstrapComplete());
+        
+        // 6. Burn unsold presale tokens
+        token.burnUnsoldPresaleTokens();
+        assertEq(token.balanceOf(presaleContract), 0);
     }
     
     function testMultipleRewardMints() public {
