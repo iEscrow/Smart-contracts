@@ -53,79 +53,80 @@ contract EscrowTokenTest is Test {
     // ============ TEAM VESTING TESTS ============
     
     function testOwnerCanSetTeamVestingContractAndMint() public {
-        token.setTeamVestingContractAndMint(teamVestingContract);
+        stakingContract = new MockStakingContract(address(token));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         assertEq(token.teamVestingContract(), teamVestingContract);
         assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
         assertTrue(token.isTeamVestingAllocationMinted());
+        assertEq(token.stakingContract(), address(stakingContract));
     }
     
     function testCannotSetTeamVestingContractTwice() public {
-        token.setTeamVestingContractAndMint(teamVestingContract);
+        stakingContract = new MockStakingContract(address(token));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         vm.expectRevert("Team vesting contract already set");
-        token.setTeamVestingContractAndMint(address(0x999));
+        token.setTeamVestingContractAndMint(address(0x999), address(0x888));
     }
     
     function testCannotSetZeroAddressAsVestingContract() public {
+        stakingContract = new MockStakingContract(address(token));
+        
         vm.expectRevert("Invalid vesting contract");
-        token.setTeamVestingContractAndMint(address(0));
+        token.setTeamVestingContractAndMint(address(0), address(stakingContract));
+        
+        vm.expectRevert("Invalid staking contract");
+        token.setTeamVestingContractAndMint(teamVestingContract, address(0));
     }
     
     function testNonOwnerCannotSetVestingContract() public {
+        stakingContract = new MockStakingContract(address(token));
+        
         vm.prank(unauthorized);
         vm.expectRevert();
-        token.setTeamVestingContractAndMint(teamVestingContract);
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
     }
     
     function testCanSetTeamVestingAfterBootstrap() public {
-        // Bootstrap first
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        // Bootstrap first by minting presale
+        token.mintPresaleAllocation(presaleContract);
         
         // Should still be able to set team vesting after bootstrap
-        token.setTeamVestingContractAndMint(teamVestingContract);
+        stakingContract = new MockStakingContract(address(token));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         assertEq(token.teamVestingContract(), teamVestingContract);
         assertEq(token.balanceOf(teamVestingContract), TEAM_VESTING_ALLOCATION);
+        assertEq(token.stakingContract(), address(stakingContract));
     }
     
     // ============ PRESALE ALLOCATION TESTS ============
     
     function testOwnerCanMintPresaleAllocation() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
         
         assertEq(token.balanceOf(presaleContract), PRESALE_ALLOCATION);
         assertTrue(token.isPresaleAllocationMinted());
         assertTrue(token.bootstrapComplete());
-        assertEq(token.stakingContract(), address(stakingContract));
     }
     
     function testCannotMintPresaleAllocationTwice() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
         
         vm.expectRevert("Bootstrap already completed");
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
     }
     
     function testCannotMintPresaleWithZeroAddress() public {
-        stakingContract = new MockStakingContract(address(token));
-        
         vm.expectRevert("Invalid presale contract");
-        token.mintPresaleAllocation(address(0), address(stakingContract));
-        
-        vm.expectRevert("Invalid staking contract");
-        token.mintPresaleAllocation(presaleContract, address(0));
+        token.mintPresaleAllocation(address(0));
     }
     
     function testNonOwnerCannotMintPresale() public {
-        stakingContract = new MockStakingContract(address(token));
-        
         vm.prank(unauthorized);
         vm.expectRevert();
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
     }
     
     // ============ BOOTSTRAP TESTS ============
@@ -133,26 +134,28 @@ contract EscrowTokenTest is Test {
     function testBootstrapCompletesImmediatelyAfterPresaleMint() public {
         assertFalse(token.bootstrapComplete());
         
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
         
         assertTrue(token.bootstrapComplete());
     }
     
     function testOwnerCannotMintPresaleAfterBootstrap() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
         
         // Owner cannot mint presale twice
         vm.expectRevert("Bootstrap already completed");
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
     }
     
     // ============ STAKING REWARDS TESTS ============
     
     function testStakingContractCanMintRewards() public {
+        // Mint presale first to complete bootstrap
+        token.mintPresaleAllocation(presaleContract);
+        
+        // Set staking via team vesting function
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         uint256 rewardAmount = 1000 * 1e18;
         stakingContract.mintRewards(user, rewardAmount);
@@ -166,8 +169,10 @@ contract EscrowTokenTest is Test {
     }
     
     function testOnlyStakingContractCanMintRewards() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         vm.prank(unauthorized);
         vm.expectRevert("Caller is not staking contract");
@@ -175,32 +180,40 @@ contract EscrowTokenTest is Test {
     }
     
     function testOwnerCannotMintRewards() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         vm.expectRevert("Caller is not staking contract");
         token.mintRewards(user, 1000 * 1e18);
     }
     
     function testCannotMintRewardsWithZeroAmount() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         vm.expectRevert("Invalid amount");
         stakingContract.mintRewards(user, 0);
     }
     
     function testCannotMintRewardsToZeroAddress() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         vm.expectRevert("Invalid recipient");
         stakingContract.mintRewards(address(0), 1000 * 1e18);
     }
     
     function testCannotExceedMaxSupply() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         uint256 maxSupply = token.MAX_SUPPLY();
         uint256 remaining = maxSupply - token.totalMinted();
@@ -229,8 +242,10 @@ contract EscrowTokenTest is Test {
     }
     
     function testCannotMintRewardsAfterFinalization() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         token.finalizeMinting();
         
         vm.expectRevert("Minting finalized");
@@ -250,9 +265,11 @@ contract EscrowTokenTest is Test {
         assertFalse(token.canMint(address(this)));
         assertFalse(token.canMint(unauthorized));
         
-        // After bootstrap
+        // After bootstrap and staking set
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         assertTrue(token.canMint(address(stakingContract)));
         assertFalse(token.canMint(address(this)));
@@ -287,11 +304,11 @@ contract EscrowTokenTest is Test {
     
     function testFullDeploymentFlow() public {
         // 1. Mint presale allocation (completes bootstrap)
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.mintPresaleAllocation(presaleContract);
         
-        // 2. Set team vesting contract and mint (can be done after bootstrap)
-        token.setTeamVestingContractAndMint(teamVestingContract);
+        // 2. Set team vesting contract, mint, and set staking (can be done after bootstrap)
+        stakingContract = new MockStakingContract(address(token));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         // 3. Verify all allocations
         assertEq(token.balanceOf(token.MARKETING_WALLET()), MARKETING_ALLOCATION);
@@ -312,8 +329,10 @@ contract EscrowTokenTest is Test {
     }
     
     function testMultipleRewardMints() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         address user1 = address(0x11);
         address user2 = address(0x22);
@@ -329,8 +348,10 @@ contract EscrowTokenTest is Test {
     // ============ BURNABLE TESTS ============
     
     function testUserCanBurnTokens() public {
+        token.mintPresaleAllocation(presaleContract);
+        
         stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
+        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
         
         uint256 amount = 1000 * 1e18;
         stakingContract.mintRewards(user, amount);

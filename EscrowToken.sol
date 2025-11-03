@@ -112,13 +112,16 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     // ============ MINTING FUNCTIONS ============
     
-    /// @notice Set team vesting contract and mint allocation in one transaction
+    /// @notice Set team vesting contract, mint allocation, and set staking contract in one transaction
     /// @param _vestingContract Address of the TokenVesting contract
-    function setTeamVestingContractAndMint(address _vestingContract) external onlyOwner {
+    /// @param _stakingContract Address of the staking contract
+    function setTeamVestingContractAndMint(address _vestingContract, address _stakingContract) external onlyOwner {
         require(_vestingContract != address(0), "Invalid vesting contract");
+        require(_stakingContract != address(0), "Invalid staking contract");
         require(teamVestingContract == address(0), "Team vesting contract already set");
         require(!teamVestingAllocationMinted, "Team vesting allocation already minted");
         require(!mintingFinalized, "Minting finalized");
+        require(stakingContract == address(0), "Staking contract already set");
         
         teamVestingContract = _vestingContract;
         teamVestingAllocationMinted = true;
@@ -126,29 +129,28 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         
         _mint(_vestingContract, TEAM_VESTING_ALLOCATION);
         
+        stakingContract = _stakingContract;
+        
         emit TeamVestingContractSet(_vestingContract);
         emit TeamVestingAllocationMinted(_vestingContract, TEAM_VESTING_ALLOCATION);
+        emit BootstrapCompleted(_stakingContract);
     }
     
-    /// @notice Mint the presale allocation (5B tokens), set staking contract, and complete bootstrap
+    /// @notice Mint the presale allocation (5B tokens) and complete bootstrap
     /// @param _presaleContract Address of the presale contract
-    /// @param staking Address of the staking contract authorised to mint rewards
-    function mintPresaleAllocation(address _presaleContract, address staking) external onlyOwner onlyBeforeBootstrap {
+    /// @dev Bootstrap is completed to lock owner minting. Staking contract set later via setTeamVestingContractAndMint
+    function mintPresaleAllocation(address _presaleContract) external onlyOwner onlyBeforeBootstrap {
         require(_presaleContract != address(0), "Invalid presale contract");
-        require(staking != address(0), "Invalid staking contract");
         require(!mintingFinalized, "Minting finalized");
         require(!presaleAllocationMinted, "Presale allocation already minted");
         
         presaleAllocationMinted = true;
         presaleContract = _presaleContract;
         totalMinted += PRESALE_ALLOCATION;
+        bootstrapComplete = true;
         
         _mint(_presaleContract, PRESALE_ALLOCATION);
         emit PresaleAllocationMinted(_presaleContract, PRESALE_ALLOCATION);
-        
-        stakingContract = staking;
-        bootstrapComplete = true;
-        emit BootstrapCompleted(staking);
     }
     
     /// @notice Mint rewards, callable only by the staking contract after bootstrap

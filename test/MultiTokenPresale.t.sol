@@ -189,7 +189,7 @@ contract MultiTokenPresaleTest is Test {
         );
         
         // Set up presale
-        escrowToken.mintPresaleAllocation(address(presale), staking);
+        escrowToken.mintPresaleAllocation(address(presale));
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         

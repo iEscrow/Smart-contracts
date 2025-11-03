@@ -54,7 +54,7 @@ contract DeployVoucherSystem is Script {
         
         // 5. Mint presale allocation to presale contract
         console.log("\\n5. Minting presale allocation...");
-        escrowToken.mintPresaleAllocation(address(presale), STAKING_CONTRACT);
+        escrowToken.mintPresaleAllocation(address(presale));
         console.log("Minted", MAX_PRESALE_TOKENS / 1e18, "ESCROW tokens to presale contract");
         
         // 6. Verify setup
@@ -113,7 +113,7 @@ contract DeployVoucherSystem is Script {
         
         // Mint tokens
         address testStaking = testOwner; // Replace if a dedicated staking contract is deployed on testnet
-        escrowToken.mintPresaleAllocation(address(presale), STAKING_CONTRACT);
+        escrowToken.mintPresaleAllocation(address(presale));
         
         // For testnet, start presale immediately
         presale.startPresale(34 days);
