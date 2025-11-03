@@ -50,7 +50,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     address public stakingContract;
     /// @notice Address of the team vesting contract
     address public teamVestingContract;
-    /// @notice Address of the presale contract (stored for burning unsold tokens)
+    /// @notice Address of the presale contract
     address public presaleContract;
     
     // ============ EVENTS ============
@@ -76,9 +76,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @notice Emitted when bootstrap is completed and the staking contract is set
     /// @param staking The staking contract that is now authorised to mint rewards
     event BootstrapCompleted(address indexed staking);
-    /// @notice Emitted when unsold presale tokens are burned
-    /// @param amount The amount of tokens burned
-    event UnsoldPresaleTokensBurned(uint256 amount);
 
     modifier onlyBeforeBootstrap() {
         require(!bootstrapComplete, "Bootstrap already completed");
@@ -169,21 +166,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         _mint(to, amount);
     }
 
-    /// @notice Burn unsold presale tokens after presale ends
-    /// @dev Can only be called by owner, burns tokens from presale contract
-    function burnUnsoldPresaleTokens() external onlyOwner {
-        require(presaleContract != address(0), "Presale contract not set");
-        require(presaleAllocationMinted, "Presale allocation not minted yet");
-        
-        uint256 unsoldAmount = balanceOf(presaleContract);
-        require(unsoldAmount > 0, "No unsold tokens to burn");
-        
-        // Burn tokens from presale contract
-        _burn(presaleContract, unsoldAmount);
-        
-        emit UnsoldPresaleTokensBurned(unsoldAmount);
-    }
-    
     /// @notice Finalize minting - prevents any future minting
     /// @dev Use this after all allocations (presale, team, treasury, LP) are complete
     function finalizeMinting() external onlyOwner {

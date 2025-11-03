@@ -214,69 +214,6 @@ contract EscrowTokenTest is Test {
         stakingContract.mintRewards(user, 1);
     }
     
-    // ============ PRESALE BURN TESTS ============
-    
-    function testOwnerCanBurnUnsoldPresaleTokens() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
-        
-        // Presale contract still has 5B tokens
-        assertEq(token.balanceOf(presaleContract), PRESALE_ALLOCATION);
-        
-        // Burn unsold tokens
-        token.burnUnsoldPresaleTokens();
-        
-        // All presale tokens should be burned
-        assertEq(token.balanceOf(presaleContract), 0);
-    }
-    
-    function testCannotBurnBeforePresaleMinted() public {
-        vm.expectRevert("Presale contract not set");
-        token.burnUnsoldPresaleTokens();
-    }
-    
-    function testCannotBurnIfNoUnsoldTokens() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
-        
-        // First burn should work
-        token.burnUnsoldPresaleTokens();
-        
-        // Second burn should fail - no tokens left
-        vm.expectRevert("No unsold tokens to burn");
-        token.burnUnsoldPresaleTokens();
-    }
-    
-    function testNonOwnerCannotBurnUnsoldTokens() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
-        
-        vm.prank(unauthorized);
-        vm.expectRevert();
-        token.burnUnsoldPresaleTokens();
-    }
-    
-    function testBurnPartiallyUnsoldTokens() public {
-        stakingContract = new MockStakingContract(address(token));
-        token.mintPresaleAllocation(presaleContract, address(stakingContract));
-        
-        // Simulate presale selling 2B tokens (transfer from presale contract)
-        uint256 soldAmount = 2_000_000_000 * 1e18;
-        vm.prank(presaleContract);
-        token.transfer(user, soldAmount);
-        
-        // Should have 3B unsold tokens
-        uint256 unsoldAmount = PRESALE_ALLOCATION - soldAmount;
-        assertEq(token.balanceOf(presaleContract), unsoldAmount);
-        
-        // Burn unsold tokens
-        token.burnUnsoldPresaleTokens();
-        
-        // Presale contract should have 0, user should still have sold amount
-        assertEq(token.balanceOf(presaleContract), 0);
-        assertEq(token.balanceOf(user), soldAmount);
-    }
-    
     // ============ MINTING FINALIZATION TESTS ============
     
     function testOwnerCanFinalizeMinting() public {
@@ -372,10 +309,6 @@ contract EscrowTokenTest is Test {
         
         // 5. Owner cannot mint presale anymore
         assertTrue(token.bootstrapComplete());
-        
-        // 6. Burn unsold presale tokens
-        token.burnUnsoldPresaleTokens();
-        assertEq(token.balanceOf(presaleContract), 0);
     }
     
     function testMultipleRewardMints() public {
