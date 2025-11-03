@@ -68,7 +68,7 @@ contract GRO07AuditFixTest is Test {
         );
         
         // Configure authorizer and enable voucher system
-        escrowToken.mintPresaleAllocation(address(presale), staking);
+        escrowToken.mintPresaleAllocation(address(presale));
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         

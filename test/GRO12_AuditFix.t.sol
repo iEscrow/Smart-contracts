@@ -50,7 +50,7 @@ contract GRO12_AuditFixTest is Test {
         // Mint presale allocation to presale contract
         // Need to create a dummy staking contract address for this
         address dummyStaking = address(0x999);
-        escrowToken.mintPresaleAllocation(address(presale), dummyStaking);
+        escrowToken.mintPresaleAllocation(address(presale));
         
         vm.stopPrank();
     }

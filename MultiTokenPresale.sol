@@ -889,6 +889,22 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         IERC20(token).safeTransfer(treasury, balance);
     }
     
+    /// @notice Burn unsold presale tokens after presale ends
+    /// @dev Only owner can call this to burn remaining tokens in presale contract
+    function burnUnsoldTokens() external onlyGovernance nonReentrant {
+        require(presaleEnded || escrowPresaleEnded, "Presale must be ended first");
+        
+        uint256 unsoldAmount = presaleToken.balanceOf(address(this));
+        require(unsoldAmount > 0, "No tokens to burn");
+        
+        // Call burn function on EscrowToken (ERC20Burnable)
+        // This will burn tokens from this contract's balance
+        (bool success, ) = address(presaleToken).call(
+            abi.encodeWithSignature("burn(uint256)", unsoldAmount)
+        );
+        require(success, "Burn failed");
+    }
+    
     function pause() external onlyGovernance {
         _pause();
     }

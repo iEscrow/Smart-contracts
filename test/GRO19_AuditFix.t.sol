@@ -48,7 +48,7 @@ contract GRO19_AuditFixTest is Test {
         presale.setVoucherSystemEnabled(true);
         
         // Mint presale allocation to presale contract
-        escrowToken.mintPresaleAllocation(address(presale), staking);
+        escrowToken.mintPresaleAllocation(address(presale));
         
         vm.stopPrank();
         

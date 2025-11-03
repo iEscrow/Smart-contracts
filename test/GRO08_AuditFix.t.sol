@@ -71,7 +71,7 @@ contract GRO08AuditFixTest is Test {
         );
         
         // Setup contracts
-        escrowToken.mintPresaleAllocation(address(presale), staking);
+        escrowToken.mintPresaleAllocation(address(presale));
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         
