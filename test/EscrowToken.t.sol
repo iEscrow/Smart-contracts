@@ -227,31 +227,6 @@ contract EscrowTokenTest is Test {
         stakingContract.mintRewards(user, 1);
     }
     
-    // ============ MINTING FINALIZATION TESTS ============
-    
-    function testOwnerCanFinalizeMinting() public {
-        token.finalizeMinting();
-        assertTrue(token.mintingFinalized());
-    }
-    
-    function testCannotFinalizeMintingTwice() public {
-        token.finalizeMinting();
-        
-        vm.expectRevert("Already finalized");
-        token.finalizeMinting();
-    }
-    
-    function testCannotMintRewardsAfterFinalization() public {
-        token.mintPresaleAllocation(presaleContract);
-        
-        stakingContract = new MockStakingContract(address(token));
-        token.setTeamVestingContractAndMint(teamVestingContract, address(stakingContract));
-        token.finalizeMinting();
-        
-        vm.expectRevert("Minting finalized");
-        stakingContract.mintRewards(user, 1000 * 1e18);
-    }
-    
     // ============ VIEW FUNCTION TESTS ============
     
     function testRemainingSupply() public {
@@ -274,10 +249,6 @@ contract EscrowTokenTest is Test {
         assertTrue(token.canMint(address(stakingContract)));
         assertFalse(token.canMint(address(this)));
         assertFalse(token.canMint(unauthorized));
-        
-        // After finalization
-        token.finalizeMinting();
-        assertFalse(token.canMint(address(stakingContract)));
     }
     
     function testGetTokenInfo() public view {
@@ -287,8 +258,7 @@ contract EscrowTokenTest is Test {
             uint8 decimals,
             uint256 maxSupply,
             uint256 currentSupply,
-            uint256 remainingMintable,
-            bool mintingComplete
+            uint256 remainingMintable
         ) = token.getTokenInfo();
         
         assertEq(name, "Escrow Token");
@@ -297,7 +267,6 @@ contract EscrowTokenTest is Test {
         assertEq(maxSupply, token.MAX_SUPPLY());
         assertEq(currentSupply, MARKETING_ALLOCATION + LIQUIDITY_ALLOCATION);
         assertEq(remainingMintable, token.MAX_SUPPLY() - token.totalMinted());
-        assertFalse(mintingComplete);
     }
     
     // ============ INTEGRATION TESTS ============

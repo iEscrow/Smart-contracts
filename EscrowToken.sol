@@ -38,8 +38,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     /// @notice Total amount of tokens minted so far
     uint256 public totalMinted;
-    /// @notice Whether minting has been permanently finalized
-    bool public mintingFinalized;
     /// @notice Whether the presale allocation has been minted
     bool public presaleAllocationMinted;
     /// @notice Whether the team vesting allocation has been minted
@@ -55,8 +53,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     
     // ============ EVENTS ============
     
-    /// @notice Emitted when minting is finalized
-    event MintingFinalized();
     /// @notice Emitted when presale allocation is minted
     /// @param presaleContract The address of the presale contract
     /// @param amount The amount of tokens minted
@@ -120,7 +116,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         require(_stakingContract != address(0), "Invalid staking contract");
         require(teamVestingContract == address(0), "Team vesting contract already set");
         require(!teamVestingAllocationMinted, "Team vesting allocation already minted");
-        require(!mintingFinalized, "Minting finalized");
         require(stakingContract == address(0), "Staking contract already set");
         
         teamVestingContract = _vestingContract;
@@ -141,7 +136,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @dev Bootstrap is completed to lock owner minting. Staking contract set later via setTeamVestingContractAndMint
     function mintPresaleAllocation(address _presaleContract) external onlyOwner onlyBeforeBootstrap {
         require(_presaleContract != address(0), "Invalid presale contract");
-        require(!mintingFinalized, "Minting finalized");
         require(!presaleAllocationMinted, "Presale allocation already minted");
         
         presaleAllocationMinted = true;
@@ -158,7 +152,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @param amount Amount of tokens to mint
     function mintRewards(address to, uint256 amount) external onlyStakingContract {
         require(bootstrapComplete, "Bootstrap incomplete");
-        require(!mintingFinalized, "Minting finalized");
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Invalid amount");
 
@@ -168,14 +161,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         _mint(to, amount);
     }
 
-    /// @notice Finalize minting - prevents any future minting
-    /// @dev Use this after all allocations (presale, team, treasury, LP) are complete
-    function finalizeMinting() external onlyOwner {
-        require(!mintingFinalized, "Already finalized");
-        mintingFinalized = true;
-        emit MintingFinalized();
-    }
-    
     // ============ VIEW FUNCTIONS ============
     
     /// @notice Get remaining supply that can be minted
@@ -188,7 +173,7 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @param account Address to check minter status for
     /// @return Whether the account can mint tokens
     function canMint(address account) external view returns (bool) {
-        return bootstrapComplete && !mintingFinalized && account == stakingContract;
+        return bootstrapComplete && account == stakingContract;
     }
     
     /// @notice Check if presale allocation has been minted
@@ -210,15 +195,13 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
     /// @return maxSupply Maximum supply of tokens
     /// @return currentSupply Current total supply
     /// @return remainingMintable Remaining tokens that can be minted
-    /// @return mintingComplete Whether minting has been finalized
     function getTokenInfo() external view returns (
         string memory tokenName,
         string memory tokenSymbol,
         uint8 tokenDecimals,
         uint256 maxSupply,
         uint256 currentSupply,
-        uint256 remainingMintable,
-        bool mintingComplete
+        uint256 remainingMintable
     ) {
         tokenName = name();
         tokenSymbol = symbol();
@@ -226,7 +209,6 @@ contract EscrowToken is ERC20, ERC20Permit, ERC20Burnable, Ownable, ReentrancyGu
         maxSupply = MAX_SUPPLY;
         currentSupply = totalSupply();
         remainingMintable = MAX_SUPPLY - totalMinted;
-        mintingComplete = mintingFinalized;
     }
     
     // ============ EMERGENCY FUNCTIONS ============
