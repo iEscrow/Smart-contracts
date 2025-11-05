@@ -891,7 +891,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     /// @notice Burn unsold presale tokens after presale ends
     /// @dev Only owner can call this to burn remaining tokens in presale contract
-    function burnUnsoldTokens() external onlyGovernance nonReentrant {
+    function burnUnsoldTokens() external onlyGovernance nonReentrant whenNotPaused {
         require(presaleEnded || escrowPresaleEnded, "Presale must be ended first");
         
         uint256 unsoldAmount = presaleToken.balanceOf(address(this));
