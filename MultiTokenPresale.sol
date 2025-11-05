@@ -315,7 +315,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         round1EndTime = block.timestamp + ROUND1_DURATION;
         presaleEndTime = block.timestamp + _duration;
         currentRound = 1;
-        presaleEnded = false;
 
         emit PresaleStarted(presaleStartTime, presaleEndTime);
         _handleRoundTransition(0, 1);
@@ -336,7 +335,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         escrowRound1EndTime = block.timestamp + ROUND1_DURATION;
         escrowPresaleEndTime = block.timestamp + MAX_PRESALE_DURATION;
         escrowCurrentRound = 1;
-        escrowPresaleEnded = false;
         
         emit PresaleStarted(escrowPresaleStartTime, escrowPresaleEndTime);
         emit AutoStartTriggered(block.timestamp);
