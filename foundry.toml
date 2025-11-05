@@ -7,6 +7,7 @@ test = "test"
 # Optimizer settings for production contract
 optimizer = true
 optimizer_runs = 200
+via_ir = true  # Enable IR-based optimizer to reduce contract size
 
 # Enable solc versions
 solc_version = "0.8.20"
