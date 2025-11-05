@@ -4,7 +4,8 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../EscrowToken.sol";
-import "../EscrowStaking.sol";
+import "../Authorizer.sol";
+import "../DevTreasury.sol";
 import "../MultiTokenPresale.sol";
 
 // Mock ERC20 tokens for testing on testnet
@@ -58,14 +59,15 @@ contract MockWBNB is ERC20 {
 
 /**
  * @title DeployPresale
- * @notice Comprehensive deployment script for all presale contracts
+ * @notice Comprehensive deployment script for all presale contracts (excluding staking)
  * @dev Deploy with: forge script script/DeployPresale.s.sol:DeployPresale --rpc-url <RPC> --private-key <KEY> --broadcast
  */
 contract DeployPresale is Script {
     // Deployed contracts
     EscrowToken public escrowToken;
+    Authorizer public authorizer;
+    DevTreasury public devTreasury;
     MultiTokenPresale public presale;
-    EscrowStaking public staking;
 
     // Mock tokens (testnet only)
     MockUSDT public mockUSDT;
@@ -75,10 +77,10 @@ contract DeployPresale is Script {
     MockLINK public mockLINK;
     MockWBNB public mockWBNB;
 
-    // Treasury addresses
+    // Treasury and authorization addresses
     address public constant PROJECT_TREASURY = 0x1321286BB1f31d4438F6E5254D2771B79a6A773e;
-    address public constant DEV_TREASURY = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public constant OWNER_ADDRESS = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
+    address public constant BACKEND_SIGNER = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2; // Backend signer for vouchers
 
     // Presale parameters
     uint256 public constant PRESALE_RATE = 666_666_666_666_666_667; // ~666.67 tokens per USD (18 decimals)
@@ -118,36 +120,60 @@ contract DeployPresale is Script {
             console.log("Mock WBNB deployed at:", address(mockWBNB));
         }
 
-        // Step 3: Deploy EscrowStaking Contract
-        console.log("\n=== Step 3: Deploying Staking Contract ===");
-        staking = new EscrowStaking(address(escrowToken));
-        console.log("Staking Contract deployed at:", address(staking));
+        // Step 3: Deploy Authorizer for KYC voucher system
+        console.log("\n=== Step 3: Deploying Authorizer ===");
+        authorizer = new Authorizer(BACKEND_SIGNER, OWNER_ADDRESS);
+        console.log("Authorizer deployed at:", address(authorizer));
 
-        // Step 4: Deploy MultiTokenPresale
-        console.log("\n=== Step 4: Deploying Presale Contract ===");
+        // Step 4: Calculate future presale address (for DevTreasury constructor)
+        console.log("\n=== Step 4: Calculating Future Presale Address ===");
+        address predictedPresaleAddress = vm.computeCreateAddress(vm.addr(deployerPrivateKey), vm.getNonce(vm.addr(deployerPrivateKey)) + 1);
+        console.log("Predicted Presale Address:", predictedPresaleAddress);
+
+        // Step 5: Deploy DevTreasury with predicted presale address
+        console.log("\n=== Step 5: Deploying DevTreasury ===");
+        devTreasury = new DevTreasury(predictedPresaleAddress);
+        console.log("DevTreasury deployed at:", address(devTreasury));
+        console.log("DevTreasury linked to future presale:", predictedPresaleAddress);
+
+        // Step 6: Deploy MultiTokenPresale with DevTreasury address
+        console.log("\n=== Step 6: Deploying Presale Contract ===");
         presale = new MultiTokenPresale(
             address(escrowToken),
             PRESALE_RATE,
             MAX_TOKENS_FOR_PRESALE,
-            DEV_TREASURY
+            address(devTreasury)
         );
         console.log("Presale Contract deployed at:", address(presale));
+        
+        // Verify prediction was correct
+        require(address(presale) == predictedPresaleAddress, "Presale address mismatch!");
+        console.log("SUCCESS: Presale address matches prediction");
 
-        // Step 5: Mint presale allocation to presale contract
-        console.log("\n=== Step 5: Minting Presale Allocation ===");
+        // Step 7: Mint presale allocation to presale contract
+        console.log("\n=== Step 7: Minting Presale Allocation ===");
         escrowToken.mintPresaleAllocation(address(presale));
         console.log("Presale allocation minted successfully");
+        
+        console.log("\n=== Configuration Steps (Owner Only) ===");
+        console.log("NOTE: The following must be done by owner:", OWNER_ADDRESS);
+        console.log("1. presale.updateAuthorizer(", address(authorizer), ")");
+        console.log("2. presale.setVoucherSystemEnabled(true)");
 
-        // Step 6: Display deployment summary
+        // Step 8: Display deployment summary
         console.log("\n========== DEPLOYMENT SUMMARY ==========");
         console.log("Network Chain ID:", block.chainid);
+        console.log("\n=== Core Contracts ===");
         console.log("ESCROW Token:", address(escrowToken));
-        console.log("Staking Contract:", address(staking));
+        console.log("Authorizer:", address(authorizer));
+        console.log("DevTreasury:", address(devTreasury));
         console.log("Presale Contract:", address(presale));
+        console.log("\n=== Configuration ===");
         console.log("Project Treasury:", PROJECT_TREASURY);
-        console.log("Dev Treasury:", DEV_TREASURY);
-        console.log("Presale Rate:", PRESALE_RATE);
-        console.log("Max Tokens for Presale:", MAX_TOKENS_FOR_PRESALE);
+        console.log("Owner Address:", OWNER_ADDRESS);
+        console.log("Backend Signer:", BACKEND_SIGNER);
+        console.log("Presale Rate:", PRESALE_RATE, "tokens per USD");
+        console.log("Max Tokens for Presale:", MAX_TOKENS_FOR_PRESALE / 1e18, "billion");
 
         if (block.chainid == 11155111 || block.chainid == 31337) {
             console.log("\n========== TEST TOKENS (TESTNET) ==========");
@@ -160,11 +186,13 @@ contract DeployPresale is Script {
         }
 
         console.log("\n========== NEXT STEPS ==========");
-        console.log("1. Owner must configure mock tokens using setTokenPrices (testnet only)");
-        console.log("2. Verify contract addresses match expectations");
-        console.log("3. Set up KYC/Authorizer if needed");
-        console.log("4. Start presale when ready");
-        console.log("5. Monitor token sales and distribution");
+        console.log("1. Verify all deployed contract addresses");
+        console.log("2. Configure mock token prices if on testnet");
+        console.log("3. Enable voucher system: presale.toggleVoucherSystem()");
+        console.log("4. Backend: Generate KYC vouchers using Authorizer signer key");
+        console.log("5. Start presale when ready: presale.startPresale() or autoStartEscrowPresale()");
+        console.log("6. After presale ends: DevTreasury.withdrawETH() and withdrawToken() distribute 4% fees");
+        console.log("\nNOTE: All contracts deployed successfully with correct dependencies!");
 
         vm.stopBroadcast();
 
