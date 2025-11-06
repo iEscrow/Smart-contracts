@@ -255,10 +255,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     ) external onlyGovernance {
         require(priceUSD > 0, "Invalid price");
         require(decimals <= 18, "Invalid decimals");
-        // Prevent price changes during active rounds (both main and escrow presales)
-        bool mainPresaleActive = presaleStartTime > 0 && !presaleEnded && block.timestamp <= presaleEndTime;
-        bool escrowPresaleActive = escrowPresaleStartTime > 0 && !escrowPresaleEnded && block.timestamp <= escrowPresaleEndTime;
-        require(!mainPresaleActive && !escrowPresaleActive, "Cannot change prices during active presale");
         
         tokenPrices[token] = TokenPrice({
             priceUSD: priceUSD,
@@ -270,7 +266,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         emit TokenStatusUpdated(token, isActive);
     }
     
-    /// @notice Set multiple token prices atomically (only when no presale is active)
+    /// @notice Set multiple token prices atomically (can be done anytime by owner)
     function setTokenPrices(
         address[] calldata tokens,
         uint256[] calldata pricesUSD,
@@ -281,10 +277,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(tokens.length == decimalsArray.length, "Array length mismatch");
         require(tokens.length == activeArray.length, "Array length mismatch");
         require(tokens.length > 0, "Empty arrays");
-        // Prevent price changes during active presales (both main and escrow presales)
-        bool mainPresaleActive = presaleStartTime > 0 && !presaleEnded && block.timestamp <= presaleEndTime;
-        bool escrowPresaleActive = escrowPresaleStartTime > 0 && !escrowPresaleEnded && block.timestamp <= escrowPresaleEndTime;
-        require(!mainPresaleActive && !escrowPresaleActive, "Cannot change prices during active presale");
         
         for (uint256 i = 0; i < tokens.length; i++) {
             require(pricesUSD[i] > 0, "Invalid price");
