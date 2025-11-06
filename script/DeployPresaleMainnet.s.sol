@@ -38,12 +38,13 @@ contract DeployPresaleMainnet is Script {
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
         vm.startBroadcast(deployerPrivateKey);
 
         console.log("========================================");
         console.log("MAINNET DEPLOYMENT - NO TEST TOKENS");
         console.log("========================================");
-        console.log("Deployer:", vm.addr(deployerPrivateKey));
+        console.log("Deployer:", deployer);
         console.log("Network Chain ID:", block.chainid);
         
         // Ensure we're on mainnet
@@ -61,7 +62,7 @@ contract DeployPresaleMainnet is Script {
 
         // Step 3: Calculate future presale address (for DevTreasury constructor)
         console.log("\n=== Step 3: Calculating Future Presale Address ===");
-        address predictedPresaleAddress = vm.computeCreateAddress(vm.addr(deployerPrivateKey), vm.getNonce(vm.addr(deployerPrivateKey)) + 1);
+        address predictedPresaleAddress = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         console.log("Predicted Presale Address:", predictedPresaleAddress);
 
         // Step 4: Deploy DevTreasury with predicted presale address
