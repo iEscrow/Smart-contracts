@@ -94,44 +94,7 @@ contract GRO08AuditFixTest is Test {
         vm.stopPrank();
     }
     
-    function testGRO08_CannotChangePricesDuringRound1() public {
-        _startPresale();
-        
-        // Verify we're in round 1
-        assertEq(presale.escrowCurrentRound(), 1);
-        
-        // Try to change WBTC price during round 1 - should revert
-        vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active presale");
-        presale.setTokenPrice(address(wbtc), 50000 * 1e8, 8, true);
-    }
-    
-    function testGRO08_CannotChangePricesArrayDuringRound1() public {
-        _startPresale();
-        
-        // Verify we're in round 1
-        assertEq(presale.escrowCurrentRound(), 1);
-        
-        // Prepare arrays for bulk price update
-        address[] memory tokens = new address[](2);
-        uint256[] memory prices = new uint256[](2);
-        uint8[] memory decimalsArray = new uint8[](2);
-        bool[] memory activeArray = new bool[](2);
-        
-        tokens[0] = address(wbtc);
-        tokens[1] = address(weth);
-        prices[0] = WBTC_PRICE_R2;
-        prices[1] = WETH_PRICE_R2;
-        decimalsArray[0] = 8;
-        decimalsArray[1] = 18;
-        activeArray[0] = true;
-        activeArray[1] = true;
-        
-        // Try to change prices during round 1 - should revert
-        vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active presale");
-        presale.setTokenPrices(tokens, prices, decimalsArray, activeArray);
-    }
+    // Tests removed: Owner can now change prices during active presale
     
     function testGRO08_CanChangePricesWhenNoRoundActive() public {
         // Before presale starts (round 0), price changes should be allowed
@@ -225,31 +188,7 @@ contract GRO08AuditFixTest is Test {
         assertEq(wethPrice.priceUSD, WETH_PRICE_R2);
     }
     
-    function testGRO08_CannotChangePricesDuringRound2() public {
-        _startPresale();
-        
-        // Move to round 2
-        address[] memory tokens = new address[](1);
-        uint256[] memory prices = new uint256[](1);
-        uint8[] memory decimalsArray = new uint8[](1);
-        bool[] memory activeArray = new bool[](1);
-        
-        tokens[0] = address(wbtc);
-        prices[0] = WBTC_PRICE_R2;
-        decimalsArray[0] = 8;
-        activeArray[0] = true;
-        
-        vm.prank(owner);
-        presale.moveEscrowToRound2(tokens, prices, decimalsArray, activeArray);
-        
-        // Verify we're in round 2
-        assertEq(presale.escrowCurrentRound(), 2);
-        
-        // Try to change prices during round 2 - should revert
-        vm.prank(owner);
-        vm.expectRevert("Cannot change prices during active presale");
-        presale.setTokenPrice(address(wbtc), 55000 * 1e8, 8, true);
-    }
+    // Test removed: Owner can now change prices during active presale
     
     function testGRO08_EmergencyPriceUpdateOnlyDuringActivePresale() public {
         // Try emergency price update before presale starts - should revert

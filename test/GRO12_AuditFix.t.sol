@@ -294,26 +294,7 @@ contract GRO12_AuditFixTest is Test {
         vm.stopPrank();
     }
     
-    /// @notice Test price changes are blocked during either presale
-    function testPriceChangesBlockedDuringPresales() public {
-        vm.warp(LAUNCH_DATE + 1);
-        
-        vm.startPrank(owner);
-        
-        // Test 1: Block price changes during escrow presale
-        presale.autoStartIEscrowPresale();
-        
-        vm.expectRevert("Cannot change prices during active presale");
-        presale.setTokenPrice(address(0), 5000 * 1e8, 18, true);
-        
-        // End main presale by advancing time beyond the duration
-        vm.warp(block.timestamp + 35 days);
-        
-        // Presale should auto-end after duration, so price changes should work
-        presale.setTokenPrice(address(0), 5000 * 1e8, 18, true);
-        
-        vm.stopPrank();
-    }
+    /// @notice Test removed: Owner can now change prices during active presale
     
     /// @notice Test round management for escrow presale
     function testEscrowPresaleRoundManagement() public {
