@@ -11,9 +11,10 @@ contract UpdatePresaleRateTest is Test {
     EscrowToken public token;
     Authorizer public authorizer;
     
-    address public owner = address(1);
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2; // Hardcoded owner from contract
     address public devTreasury = address(2);
-    address public backendSigner = address(3);
+    uint256 public backendSignerPk = 12345;
+    address public backendSigner = vm.addr(backendSignerPk);
     address public user = address(4);
     
     uint256 public constant INITIAL_RATE = 666666666666666667000; // ~666.67 tokens per USD
@@ -107,8 +108,9 @@ contract UpdatePresaleRateTest is Test {
         presale.moveToRound2(tokens, prices, decimals, active);
         
         // Try to update rate after Round 2 started
+        // Note: Will fail first check (canUpdate) since currentRound == 2
         vm.prank(owner);
-        vm.expectRevert("Cannot update after Round 2 started");
+        vm.expectRevert("Can only update after Round 1 ends");
         presale.updatePresaleRate(NEW_RATE);
     }
     
@@ -185,8 +187,9 @@ contract UpdatePresaleRateTest is Test {
         presale.moveEscrowToRound2(tokens, prices, decimals, active);
         
         // Try to update rate after Round 2 started
+        // Note: Will fail first check (canUpdate) since escrowCurrentRound == 2
         vm.prank(owner);
-        vm.expectRevert("Cannot update after Round 2 started");
+        vm.expectRevert("Can only update after Round 1 ends");
         presale.updatePresaleRate(NEW_RATE);
     }
     
@@ -223,9 +226,12 @@ contract UpdatePresaleRateTest is Test {
         presale.moveToRound2(tokens, prices, decimals, active);
         
         // Calculate expected tokens with new rate
-        // 1 ETH = $4000
-        // $4000 * 500 tokens/USD = 2,000,000 tokens
-        uint256 expectedTokens = (4000e8 * NEW_RATE) / 1e8;
+        // 1 ETH minus gas buffer (0.0005 ETH) = 0.9995 ETH
+        // 0.9995 ETH * $4000 = $3998
+        // $3998 * 500 tokens/USD = 1,999,000 tokens
+        uint256 paymentAfterBuffer = 1 ether - 0.0005 ether;
+        uint256 usdValue = (paymentAfterBuffer * 4000e8) / 1 ether;
+        uint256 expectedTokens = (usdValue * NEW_RATE) / 1e8;
         
         // Create voucher for purchase
         Authorizer.Voucher memory voucher = Authorizer.Voucher({
@@ -238,8 +244,9 @@ contract UpdatePresaleRateTest is Test {
             presale: address(presale)
         });
         
+        // Sign with backend signer private key
         bytes32 digest = _getDigest(voucher);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(uint256(uint160(backendSigner)), digest);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(backendSignerPk, digest);
         bytes memory signature = abi.encodePacked(r, s, v);
         
         // Buy with 1 ETH
