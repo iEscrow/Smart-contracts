@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../MultiTokenPresale.sol";
+import "../EscrowToken.sol";
+import "../Authorizer.sol";
+
+contract DualPresalePreventionTest is Test {
+    MultiTokenPresale public presale;
+    EscrowToken public token;
+    Authorizer public authorizer;
+    
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
+    address public devTreasury = address(2);
+    address public backendSigner = address(3);
+    
+    uint256 public constant PRESALE_RATE = 666666666666666667000;
+    uint256 public constant MAX_TOKENS = 5000000000 * 1e18;
+    uint256 public constant MAX_PRESALE_DURATION = 34 days;
+    uint256 public constant PRESALE_LAUNCH_DATE = 1762819200;
+    
+    function setUp() public {
+        vm.startPrank(owner);
+        
+        token = new EscrowToken();
+        authorizer = new Authorizer(backendSigner, owner);
+        presale = new MultiTokenPresale(
+            address(token),
+            PRESALE_RATE,
+            MAX_TOKENS,
+            devTreasury
+        );
+        
+        presale.updateAuthorizer(address(authorizer));
+        presale.setVoucherSystemEnabled(true);
+        token.mintPresaleAllocation(address(presale));
+        
+        vm.stopPrank();
+    }
+    
+    function test_CannotStartMainPresaleIfEscrowPresaleActive() public {
+        // Start escrow presale first
+        vm.warp(PRESALE_LAUNCH_DATE);
+        presale.autoStartIEscrowPresale();
+        
+        // Try to start main presale - should fail
+        vm.prank(owner);
+        vm.expectRevert("Escrow presale already active");
+        presale.startPresale(MAX_PRESALE_DURATION);
+    }
+    
+    function test_CannotStartEscrowPresaleIfMainPresaleActive() public {
+        // Start main presale first
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Warp to launch date
+        vm.warp(PRESALE_LAUNCH_DATE);
+        
+        // Try to start escrow presale - should fail
+        vm.expectRevert("Main presale already active");
+        presale.autoStartIEscrowPresale();
+    }
+    
+    function test_CanStartMainPresaleAfterEscrowPresaleEnds() public {
+        // Start and end escrow presale
+        vm.warp(PRESALE_LAUNCH_DATE);
+        presale.autoStartIEscrowPresale();
+        
+        vm.warp(PRESALE_LAUNCH_DATE + MAX_PRESALE_DURATION + 1);
+        vm.prank(owner);
+        presale.endEscrowPresale();
+        
+        // Now should be able to start main presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        assertTrue(presale.presaleStartTime() > 0);
+    }
+    
+    function test_CanStartEscrowPresaleAfterMainPresaleEnds() public {
+        // Start and end main presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        vm.warp(block.timestamp + MAX_PRESALE_DURATION + 1);
+        vm.prank(owner);
+        presale.endPresale();
+        
+        // Now should be able to start escrow presale
+        vm.warp(PRESALE_LAUNCH_DATE);
+        presale.autoStartIEscrowPresale();
+        
+        assertTrue(presale.escrowPresaleStartTime() > 0);
+    }
+    
+    function test_CanStartMainPresaleAfterEmergencyEndEscrow() public {
+        // Start escrow presale
+        vm.warp(PRESALE_LAUNCH_DATE);
+        presale.autoStartIEscrowPresale();
+        
+        // Emergency end it
+        vm.prank(owner);
+        presale.emergencyEndEscrowPresale();
+        
+        // Should be able to start main presale now
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        assertTrue(presale.presaleStartTime() > 0);
+    }
+}

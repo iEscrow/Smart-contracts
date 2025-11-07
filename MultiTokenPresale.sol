@@ -330,6 +330,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
             presaleToken.balanceOf(address(this)) >= maxTokensToMint,
             "Insufficient presale tokens in contract"
         );
+        // Prevent starting if escrow presale is active
+        require(
+            escrowPresaleStartTime == 0 || escrowPresaleEnded,
+            "Escrow presale already active"
+        );
 
         presaleStartTime = block.timestamp;
         round1EndTime = block.timestamp + ROUND1_DURATION;
@@ -346,6 +351,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(escrowPresaleStartTime == 0, "Escrow presale already started");
         require(!escrowPresaleEnded, "Escrow presale already ended - cannot restart");
         require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
+        // Prevent starting if main presale is active
+        require(
+            presaleStartTime == 0 || presaleEnded,
+            "Main presale already active"
+        );
         
         // Verify contract has enough presale tokens (5B $ESCROW)
         uint256 contractBalance = presaleToken.balanceOf(address(this));

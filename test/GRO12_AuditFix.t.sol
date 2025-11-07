@@ -227,11 +227,15 @@ contract GRO12_AuditFixTest is Test {
         uint256 escrowTokens = presale.totalPurchased(user1);
         uint256 escrowRound1Sold = presale.escrowRound1TokensSold();
         
-        // End escrow presale by warping past duration (auto-ends)
+        // End escrow presale by warping past duration and calling end
         vm.warp(LAUNCH_DATE + 35 days); // After max duration
         
-        // Verify escrow presale has ended (time-based, no need to call checkAutoEndConditions)
-        assertEq(presale.getActivePresaleMode(), 0); // No presale active after time expired
+        // Explicitly end escrow presale
+        vm.prank(owner);
+        presale.endEscrowPresale();
+        
+        // Verify escrow presale has ended
+        assertEq(presale.getActivePresaleMode(), 0); // No presale active after ended
         
         // Phase 2: Start main presale after escrow presale ends
         vm.prank(owner);
