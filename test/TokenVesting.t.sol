@@ -19,7 +19,7 @@ contract TokenVestingTest is Test {
     address public beneficiary1 = 0x04435410a78192baAfa00c72C659aD3187a2C2cF;
     address public beneficiary2 = 0x9005132849bC9585A948269D96F23f56e5981A61;
     address public beneficiary3 = 0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74;
-    address public beneficiary4 = 0x507541B0Caf529a063E97c6C145E521d3F394264;
+    address public beneficiary4 = 0x403D8E7c3a1f7a0C7faF2a81b52CC74D775E9E21; // Muhammad's new address
     address public nonBeneficiary = address(0x999);
     
     uint256 public startTime;
