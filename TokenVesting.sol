@@ -66,7 +66,7 @@ contract TokenVesting is ReentrancyGuard, Ownable {
     address public constant BENEFICIARY8 = 0xC259811079610E1a60Bf5ebCb7d0F8Ac3857b1d6;
     address public constant BENEFICIARY9 = 0x68f5d8e68abDf9c6C0233DE2bdAda5e18CC6634d;
     address public constant BENEFICIARY10 = 0xCACEeBfD2E88ce3741dd45622cDf5D2f3166e8f5;
-    address public constant BENEFICIARY11 = 0x507541B0Caf529a063E97c6C145E521d3F394264;
+    address public constant BENEFICIARY11 = 0x403d8e7c3a1f7a0c7faf2a81b52cc74d775e9e21;
     
     // 40M allocation (4%)
     address public constant BENEFICIARY12 = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d;
