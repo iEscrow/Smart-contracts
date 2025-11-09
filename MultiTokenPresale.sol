@@ -37,7 +37,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // Presale token details
     IERC20 public presaleToken;
-    uint256 public immutable presaleRate;  // Tokens per USD (18 decimals)
+    uint256 public presaleRate;  // Tokens per USD (18 decimals) - can be updated by owner after Round 1
     uint256 public immutable maxTokensToMint;
     uint256 public totalTokensMinted;
     
@@ -140,6 +140,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     event VoucherHashConsumed(bytes32 indexed voucherHash, address indexed buyer);
     event TreasuryUpdateRequested(address indexed newTreasury);
     event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
+    event PresaleRateUpdated(uint256 oldRate, uint256 newRate);
     
     constructor(
         address _presaleToken,
@@ -293,6 +294,33 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         }
     }
     
+    /// @notice Update presale rate (tokens per USD) - only after Round 1 ends and before Round 2 starts
+    /// @param _newPresaleRate New presale rate with 18 decimals (e.g., 20 * 1e18 for 20 tokens per USD)
+    function updatePresaleRate(uint256 _newPresaleRate) external onlyGovernance {
+        require(_newPresaleRate > 0, "Invalid presale rate");
+        
+        // Check if we can update: Round 1 must be ended, Round 2 must not have started
+        bool canUpdate = false;
+        
+        // Check main presale: Round 1 ended but still in Round 1 (not moved to Round 2 yet)
+        if (presaleStartTime > 0 && currentRound == 1 && block.timestamp > round1EndTime) {
+            canUpdate = true;
+        }
+        
+        // Check escrow presale: Round 1 ended but still in Round 1 (not moved to Round 2 yet)
+        if (escrowPresaleStartTime > 0 && escrowCurrentRound == 1 && block.timestamp > escrowRound1EndTime) {
+            canUpdate = true;
+        }
+        
+        require(canUpdate, "Can only update after Round 1 ends");
+        require(currentRound != 2 && escrowCurrentRound != 2, "Cannot update after Round 2 started");
+        
+        uint256 oldRate = presaleRate;
+        presaleRate = _newPresaleRate;
+        
+        emit PresaleRateUpdated(oldRate, _newPresaleRate);
+    }
+    
     // Presale timing controls
     function startPresale(uint256 _duration) external onlyGovernance {
         require(presaleStartTime == 0, "Presale already started");
@@ -301,6 +329,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(
             presaleToken.balanceOf(address(this)) >= maxTokensToMint,
             "Insufficient presale tokens in contract"
+        );
+        // Prevent starting if escrow presale is active
+        require(
+            escrowPresaleStartTime == 0 || escrowPresaleEnded,
+            "Escrow presale already active"
         );
 
         presaleStartTime = block.timestamp;
@@ -317,6 +350,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         require(escrowPresaleStartTime == 0, "Escrow presale already started");
         require(!escrowPresaleEnded, "Escrow presale already ended - cannot restart");
         require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
+        // Prevent starting if main presale is active
+        require(
+            presaleStartTime == 0 || presaleEnded,
+            "Main presale already active"
+        );
         
         // Verify contract has enough presale tokens (5B $ESCROW)
         uint256 contractBalance = presaleToken.balanceOf(address(this));

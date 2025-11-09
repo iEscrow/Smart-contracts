@@ -1,0 +1,319 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../MultiTokenPresale.sol";
+import "../EscrowToken.sol";
+import "../Authorizer.sol";
+
+contract UpdatePresaleRateTest is Test {
+    MultiTokenPresale public presale;
+    EscrowToken public token;
+    Authorizer public authorizer;
+    
+    address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2; // Hardcoded owner from contract
+    address public devTreasury = address(2);
+    uint256 public backendSignerPk = 12345;
+    address public backendSigner = vm.addr(backendSignerPk);
+    address public user = address(4);
+    
+    uint256 public constant INITIAL_RATE = 666666666666666667000; // ~666.67 tokens per USD
+    uint256 public constant NEW_RATE = 500000000000000000000; // 500 tokens per USD
+    uint256 public constant MAX_TOKENS = 5000000000 * 1e18;
+    
+    uint256 public constant ROUND1_DURATION = 23 days;
+    uint256 public constant ROUND2_DURATION = 11 days;
+    uint256 public constant MAX_PRESALE_DURATION = 34 days;
+    
+    function setUp() public {
+        vm.startPrank(owner);
+        
+        // Deploy contracts
+        token = new EscrowToken();
+        authorizer = new Authorizer(backendSigner, owner);
+        presale = new MultiTokenPresale(
+            address(token),
+            INITIAL_RATE,
+            MAX_TOKENS,
+            devTreasury
+        );
+        
+        // Setup presale
+        presale.updateAuthorizer(address(authorizer));
+        presale.setVoucherSystemEnabled(true);
+        
+        // Mint tokens to presale
+        token.mintPresaleAllocation(address(presale));
+        
+        vm.stopPrank();
+    }
+    
+    // ============ MAIN PRESALE TESTS ============
+    
+    function test_CannotUpdateRateBeforePresaleStarts() public {
+        vm.prank(owner);
+        vm.expectRevert("Can only update after Round 1 ends");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    function test_CannotUpdateRateDuringRound1() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Try to update rate during Round 1
+        vm.prank(owner);
+        vm.expectRevert("Can only update after Round 1 ends");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    function test_CanUpdateRateAfterRound1EndsBeforeRound2Starts() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Update rate should work
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit PresaleRateUpdated(INITIAL_RATE, NEW_RATE);
+        presale.updatePresaleRate(NEW_RATE);
+        
+        // Verify rate changed
+        assertEq(presale.presaleRate(), NEW_RATE);
+    }
+    
+    function test_CannotUpdateRateAfterRound2Starts() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Move to Round 2 with new prices
+        address[] memory tokens = new address[](1);
+        uint256[] memory prices = new uint256[](1);
+        uint8[] memory decimals = new uint8[](1);
+        bool[] memory active = new bool[](1);
+        
+        tokens[0] = address(0);
+        prices[0] = 4000e8; // Different price for Round 2
+        decimals[0] = 18;
+        active[0] = true;
+        
+        vm.prank(owner);
+        presale.moveToRound2(tokens, prices, decimals, active);
+        
+        // Try to update rate after Round 2 started
+        // Note: Will fail first check (canUpdate) since currentRound == 2
+        vm.prank(owner);
+        vm.expectRevert("Can only update after Round 1 ends");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    function test_CannotUpdateRateWithZero() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Try to update with zero rate
+        vm.prank(owner);
+        vm.expectRevert("Invalid presale rate");
+        presale.updatePresaleRate(0);
+    }
+    
+    function test_OnlyOwnerCanUpdateRate() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Try to update as non-owner
+        vm.prank(user);
+        vm.expectRevert("Only owner");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    // ============ ESCROW PRESALE TESTS ============
+    
+    function test_CanUpdateRateAfterEscrowRound1Ends() public {
+        // Warp to launch date
+        vm.warp(1762819200); // Nov 11, 2025
+        
+        // Start escrow presale
+        presale.autoStartIEscrowPresale();
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Update rate should work
+        vm.prank(owner);
+        presale.updatePresaleRate(NEW_RATE);
+        
+        // Verify rate changed
+        assertEq(presale.presaleRate(), NEW_RATE);
+    }
+    
+    function test_CannotUpdateRateAfterEscrowRound2Starts() public {
+        // Warp to launch date
+        vm.warp(1762819200); // Nov 11, 2025
+        
+        // Start escrow presale
+        presale.autoStartIEscrowPresale();
+        
+        // Move time to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Move to Round 2
+        address[] memory tokens = new address[](1);
+        uint256[] memory prices = new uint256[](1);
+        uint8[] memory decimals = new uint8[](1);
+        bool[] memory active = new bool[](1);
+        
+        tokens[0] = address(0);
+        prices[0] = 4000e8;
+        decimals[0] = 18;
+        active[0] = true;
+        
+        vm.prank(owner);
+        presale.moveEscrowToRound2(tokens, prices, decimals, active);
+        
+        // Try to update rate after Round 2 started
+        // Note: Will fail first check (canUpdate) since escrowCurrentRound == 2
+        vm.prank(owner);
+        vm.expectRevert("Can only update after Round 1 ends");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    // ============ INTEGRATION TESTS ============
+    
+    function test_UpdatedRateAffectsPurchasesInRound2() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Configure ETH price
+        vm.prank(owner);
+        presale.setTokenPrice(address(0), 4200e8, 18, true);
+        
+        // Move to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // Update presale rate
+        vm.prank(owner);
+        presale.updatePresaleRate(NEW_RATE);
+        
+        // Move to Round 2 with new ETH price
+        address[] memory tokens = new address[](1);
+        uint256[] memory prices = new uint256[](1);
+        uint8[] memory decimals = new uint8[](1);
+        bool[] memory active = new bool[](1);
+        
+        tokens[0] = address(0);
+        prices[0] = 4000e8; // Lower ETH price
+        decimals[0] = 18;
+        active[0] = true;
+        
+        vm.prank(owner);
+        presale.moveToRound2(tokens, prices, decimals, active);
+        
+        // Calculate expected tokens with new rate
+        // 1 ETH minus gas buffer (0.0005 ETH) = 0.9995 ETH
+        // 0.9995 ETH * $4000 = $3998
+        // $3998 * 500 tokens/USD = 1,999,000 tokens
+        uint256 paymentAfterBuffer = 1 ether - 0.0005 ether;
+        uint256 usdValue = (paymentAfterBuffer * 4000e8) / 1 ether;
+        uint256 expectedTokens = (usdValue * NEW_RATE) / 1e8;
+        
+        // Create voucher for purchase
+        Authorizer.Voucher memory voucher = Authorizer.Voucher({
+            buyer: user,
+            beneficiary: user,
+            paymentToken: address(0),
+            usdLimit: 5000e8, // $5000 limit
+            nonce: 0,
+            deadline: block.timestamp + 1 hours,
+            presale: address(presale)
+        });
+        
+        // Sign with backend signer private key
+        bytes32 digest = _getDigest(voucher);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(backendSignerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+        
+        // Buy with 1 ETH
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        presale.buyWithNativeVoucher{value: 1 ether}(user, voucher, signature);
+        
+        // Verify correct amount received with new rate
+        uint256 actualTokens = presale.totalPurchased(user);
+        assertEq(actualTokens, expectedTokens);
+    }
+    
+    // ============ EDGE CASES ============
+    
+    function test_CanUpdateMultipleTimes() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move to after Round 1 ends
+        vm.warp(block.timestamp + ROUND1_DURATION + 1);
+        
+        // First update
+        vm.prank(owner);
+        presale.updatePresaleRate(NEW_RATE);
+        assertEq(presale.presaleRate(), NEW_RATE);
+        
+        // Second update (before Round 2 starts)
+        uint256 anotherRate = 400000000000000000000;
+        vm.prank(owner);
+        presale.updatePresaleRate(anotherRate);
+        assertEq(presale.presaleRate(), anotherRate);
+    }
+    
+    function test_CannotUpdateRateAtExactRound1EndTime() public {
+        // Start presale
+        vm.prank(owner);
+        presale.startPresale(MAX_PRESALE_DURATION);
+        
+        // Move to exact Round 1 end time (not after)
+        vm.warp(block.timestamp + ROUND1_DURATION);
+        
+        // Should fail because we need > round1EndTime, not >=
+        vm.prank(owner);
+        vm.expectRevert("Can only update after Round 1 ends");
+        presale.updatePresaleRate(NEW_RATE);
+    }
+    
+    // ============ HELPER FUNCTIONS ============
+    
+    function _getDigest(Authorizer.Voucher memory voucher) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256("Voucher(address buyer,address beneficiary,address paymentToken,uint256 usdLimit,uint256 nonce,uint256 deadline,address presale)"),
+            voucher.buyer,
+            voucher.beneficiary,
+            voucher.paymentToken,
+            voucher.usdLimit,
+            voucher.nonce,
+            voucher.deadline,
+            voucher.presale
+        ));
+        
+        bytes32 domainSeparator = authorizer.getDomainSeparator();
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+    
+    // ============ EVENTS ============
+    
+    event PresaleRateUpdated(uint256 oldRate, uint256 newRate);
+}
