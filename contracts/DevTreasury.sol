@@ -33,7 +33,7 @@ contract DevTreasury is ReentrancyGuard {
     address public constant DEVELOPER1 = 0x04435410a78192baAfa00c72C659aD3187a2C2cF; // Surya - 31.25% (1.25% of presale)
     address public constant DEVELOPER2 = 0x9005132849bC9585A948269D96F23f56e5981A61; // Bhom - 31.25% (1.25% of presale)
     address public constant DEVELOPER3 = 0x1C5cf9Cb69effeeb31E261BB6519AF7247A97A74; // Zala - 12.5% (0.5% of presale)
-    address public constant DEVELOPER4 = 0x403d8e7c3a1f7a0c7faf2a81b52cc74d775e9e21; // Muhammad - 25% (1% of presale)
+    address public constant DEVELOPER4 = 0x403D8E7c3a1f7a0C7faF2a81b52CC74D775E9E21; // Muhammad - 25% (1% of presale)
     
     // ============ CONSTANTS ============
     

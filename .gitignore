@@ -3,6 +3,11 @@
 /cache
 /broadcast
 
+# Hardhat Build Artifacts
+/artifacts
+/cache
+/typechain-types
+
 # Node modules (if needed)
 /node_modules
 
