@@ -62,7 +62,14 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     mapping(address => mapping(address => uint256)) public purchasedAmounts; // user => token => amount
     mapping(address => uint256) public totalPurchased; // Total tokens purchased by user
     mapping(address => uint256) public totalUsdPurchased; // User's cumulative USD spent (8 decimals)
-    mapping(address => bool) public hasClaimed;
+    mapping(address => bool) public hasClaimed; // Deprecated - kept for backward compatibility
+    
+    // Vesting schedule tracking (25% every 30 days)
+    mapping(address => uint256) public claimedAmount; // Total amount user has claimed so far
+    mapping(address => uint256) public lastClaimTime; // Last time user claimed tokens
+    uint256 public tgeTimestamp; // Token Generation Event timestamp (set when presale ends)
+    uint256 public constant VESTING_PERIOD = 30 days; // 30 days between claims
+    uint256 public constant VESTING_PERCENTAGE = 25; // 25% per vesting period
     
     // GRO-19: In-contract replay protection (defense-in-depth)
     mapping(bytes32 => bool) private usedVoucherHashes; // Track consumed voucher hashes independently
@@ -117,6 +124,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     );
     
     event TokensClaimed(address indexed user, uint256 amount);
+    event TGETimestampSet(uint256 timestamp);
     event PriceUpdated(address indexed token, uint256 newPrice);
     event TokenStatusUpdated(address indexed token, bool isActive);
     event PresaleStarted(uint256 startTime, uint256 endTime);
@@ -890,17 +898,73 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     // ============ CLAIM FUNCTIONS ============
     
+    /// @notice Claim vested tokens based on vesting schedule (25% every 30 days)
+    /// @dev Vesting Schedule:
+    ///      - 25% at TGE (immediately after presale ends)
+    ///      - 25% after 30 days
+    ///      - 25% after 60 days
+    ///      - 25% after 90 days (100% total)
     function claimTokens() external nonReentrant whenNotPaused {
         require(totalPurchased[msg.sender] > 0, "No tokens to claim");
-        require(!hasClaimed[msg.sender], "Already claimed");
         require(presaleEnded || escrowPresaleEnded, "No presale ended yet");
+        require(tgeTimestamp > 0, "TGE timestamp not set");
         
-        uint256 claimAmount = totalPurchased[msg.sender];
-        hasClaimed[msg.sender] = true;
+        uint256 totalAllocation = totalPurchased[msg.sender];
+        uint256 alreadyClaimed = claimedAmount[msg.sender];
         
-        presaleToken.safeTransfer(msg.sender, claimAmount);
+        require(alreadyClaimed < totalAllocation, "All tokens already claimed");
         
-        emit TokensClaimed(msg.sender, claimAmount);
+        // Calculate how much user can claim based on time elapsed since TGE
+        uint256 claimableAmount = _calculateClaimableAmount(msg.sender);
+        
+        require(claimableAmount > 0, "No tokens available to claim yet");
+        
+        // Update tracking
+        claimedAmount[msg.sender] += claimableAmount;
+        lastClaimTime[msg.sender] = block.timestamp;
+        
+        // Transfer tokens
+        presaleToken.safeTransfer(msg.sender, claimableAmount);
+        
+        emit TokensClaimed(msg.sender, claimableAmount);
+    }
+    
+    /// @notice Calculate how many tokens a user can claim based on vesting schedule
+    /// @param user Address of the user
+    /// @return claimableAmount Amount of tokens that can be claimed now
+    function _calculateClaimableAmount(address user) internal view returns (uint256 claimableAmount) {
+        uint256 totalAllocation = totalPurchased[user];
+        uint256 alreadyClaimed = claimedAmount[user];
+        
+        // Calculate time elapsed since TGE
+        uint256 timeElapsed = block.timestamp - tgeTimestamp;
+        
+        // Calculate how many vesting periods have passed (0, 1, 2, or 3)
+        uint256 periodsPassed = timeElapsed / VESTING_PERIOD;
+        
+        // Cap at 3 periods (4 total claims including TGE = 100%)
+        if (periodsPassed > 3) {
+            periodsPassed = 3;
+        }
+        
+        // Calculate total percentage unlocked (25% at TGE + 25% per period)
+        // Period 0: 25% (TGE)
+        // Period 1: 50% (TGE + 30 days)
+        // Period 2: 75% (TGE + 60 days)
+        // Period 3+: 100% (TGE + 90 days)
+        uint256 totalUnlockedPercentage = VESTING_PERCENTAGE * (periodsPassed + 1);
+        
+        // Calculate total unlocked amount
+        uint256 totalUnlocked = (totalAllocation * totalUnlockedPercentage) / 100;
+        
+        // Claimable amount is the difference between unlocked and already claimed
+        if (totalUnlocked > alreadyClaimed) {
+            claimableAmount = totalUnlocked - alreadyClaimed;
+        } else {
+            claimableAmount = 0;
+        }
+        
+        return claimableAmount;
     }
     
     // ============ ADMIN FUNCTIONS ============
@@ -941,6 +1005,19 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     
     function unpause() external onlyGovernance {
         _unpause();
+    }
+    
+    /// @notice Set TGE (Token Generation Event) timestamp to start vesting schedule
+    /// @dev Can only be set once, must be called after presale ends
+    /// @param _tgeTimestamp Timestamp when TGE occurs (usually block.timestamp)
+    function setTGETimestamp(uint256 _tgeTimestamp) external onlyGovernance {
+        require(presaleEnded || escrowPresaleEnded, "Presale must end first");
+        require(tgeTimestamp == 0, "TGE timestamp already set");
+        require(_tgeTimestamp >= block.timestamp, "TGE cannot be in the past");
+        require(_tgeTimestamp <= block.timestamp + 30 days, "TGE too far in future");
+        
+        tgeTimestamp = _tgeTimestamp;
+        emit TGETimestampSet(_tgeTimestamp);
     }
     
     // ============ VIEW FUNCTIONS ============
@@ -1010,11 +1087,62 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function canClaim() external view returns (bool) {
-        // Can claim if either presale has explicitly ended OR if time has expired
-        bool mainPresaleTimeExpired = presaleStartTime > 0 && block.timestamp > presaleEndTime;
-        bool escrowPresaleTimeExpired = escrowPresaleStartTime > 0 && block.timestamp > escrowPresaleEndTime;
+        // Can claim if TGE has been set and presale ended
+        return tgeTimestamp > 0 && tgeTimestamp <= block.timestamp && (presaleEnded || escrowPresaleEnded);
+    }
+    
+    /// @notice Get vesting schedule information for a user
+    /// @param user Address of the user
+    /// @return totalAllocation Total tokens purchased by user
+    /// @return claimedSoFar Total tokens claimed so far
+    /// @return claimableNow Tokens available to claim now
+    /// @return nextUnlockTime Timestamp when next tokens unlock (0 if fully vested)
+    /// @return nextUnlockAmount Amount that will unlock at nextUnlockTime
+    /// @return fullyVestedTime Timestamp when all tokens will be vested
+    function getVestingInfo(address user) external view returns (
+        uint256 totalAllocation,
+        uint256 claimedSoFar,
+        uint256 claimableNow,
+        uint256 nextUnlockTime,
+        uint256 nextUnlockAmount,
+        uint256 fullyVestedTime
+    ) {
+        totalAllocation = totalPurchased[user];
+        claimedSoFar = claimedAmount[user];
         
-        return presaleEnded || escrowPresaleEnded || mainPresaleTimeExpired || escrowPresaleTimeExpired;
+        if (tgeTimestamp == 0 || totalAllocation == 0) {
+            return (totalAllocation, claimedSoFar, 0, 0, 0, 0);
+        }
+        
+        // Calculate claimable now
+        if (block.timestamp >= tgeTimestamp) {
+            claimableNow = _calculateClaimableAmount(user);
+        }
+        
+        // Calculate next unlock time and amount
+        uint256 timeElapsed = block.timestamp >= tgeTimestamp ? block.timestamp - tgeTimestamp : 0;
+        uint256 periodsPassed = timeElapsed / VESTING_PERIOD;
+        
+        if (periodsPassed < 3) {
+            // There are still tokens to unlock
+            nextUnlockTime = tgeTimestamp + ((periodsPassed + 1) * VESTING_PERIOD);
+            
+            // Calculate next unlock amount (25% of total)
+            uint256 nextPeriodPercentage = VESTING_PERCENTAGE * (periodsPassed + 2);
+            uint256 nextPeriodTotal = (totalAllocation * nextPeriodPercentage) / 100;
+            uint256 currentPeriodPercentage = VESTING_PERCENTAGE * (periodsPassed + 1);
+            uint256 currentPeriodTotal = (totalAllocation * currentPeriodPercentage) / 100;
+            nextUnlockAmount = nextPeriodTotal - currentPeriodTotal;
+        } else {
+            // Fully vested
+            nextUnlockTime = 0;
+            nextUnlockAmount = 0;
+        }
+        
+        // Fully vested time is TGE + 90 days
+        fullyVestedTime = tgeTimestamp + (3 * VESTING_PERIOD);
+        
+        return (totalAllocation, claimedSoFar, claimableNow, nextUnlockTime, nextUnlockAmount, fullyVestedTime);
     }
     
     // Get escrow presale status
