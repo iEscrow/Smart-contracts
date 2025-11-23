@@ -25,7 +25,7 @@ contract DeployPresaleMainnet is Script {
     address public constant BACKEND_SIGNER = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2; // Backend signer for vouchers
 
     // Presale parameters
-    uint256 public constant PRESALE_RATE = 666_666_666_666_666_666_667; // ~666.67 tokens per USD = $0.0015 per token (18 decimals)
+    uint256 public constant PRESALE_RATE = 66_666_666_666_666_666_667; // ~66.67 tokens per USD = $0.015 per token (18 decimals)
     uint256 public constant MAX_TOKENS_FOR_PRESALE = 5_000_000_000 * 10**18; // 5B tokens
     uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025 11:00 AM UTC
 
