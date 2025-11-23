@@ -173,6 +173,14 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         
         // Dev treasury for 4% fee (set in constructor, immutable)
         devTreasury = _devTreasury;
+        
+        // Auto-start escrow presale at deployment (saves $43-123 gas fee)
+        // Presale automatically becomes active at PRESALE_LAUNCH_DATE (Nov 25, 2025)
+        escrowPresaleStartTime = PRESALE_LAUNCH_DATE;
+        escrowRound1EndTime = PRESALE_LAUNCH_DATE + ROUND1_DURATION;
+        escrowPresaleEndTime = PRESALE_LAUNCH_DATE + MAX_PRESALE_DURATION;
+        escrowCurrentRound = 1;
+        escrowPresaleEnded = false;
     }
     
     // ============ MODIFIERS ============
@@ -352,33 +360,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
 
         emit PresaleStarted(presaleStartTime, presaleEndTime);
         _handleRoundTransition(0, 1);
-    }
-    
-    // Auto-start presale on November 11, 2025 - Anyone can trigger
-    function autoStartIEscrowPresale() external {
-        require(escrowPresaleStartTime == 0, "Escrow presale already started");
-        require(!escrowPresaleEnded, "Escrow presale already ended - cannot restart");
-        require(block.timestamp >= PRESALE_LAUNCH_DATE, "Too early - presale starts Nov 11, 2025");
-        // Prevent starting if main presale is active
-        require(
-            presaleStartTime == 0 || presaleEnded,
-            "Main presale already active"
-        );
-        
-        // Verify contract has enough presale tokens (5B $ESCROW)
-        uint256 contractBalance = presaleToken.balanceOf(address(this));
-        require(contractBalance >= maxTokensToMint, "Insufficient presale tokens in contract");
-        
-        // Start Escrow Presale Round 1
-        escrowPresaleStartTime = block.timestamp;
-        escrowRound1EndTime = block.timestamp + ROUND1_DURATION;
-        escrowPresaleEndTime = block.timestamp + MAX_PRESALE_DURATION;
-        escrowCurrentRound = 1;
-        escrowPresaleEnded = false;
-        
-        emit PresaleStarted(escrowPresaleStartTime, escrowPresaleEndTime);
-        emit AutoStartTriggered(block.timestamp);
-        emit RoundAdvanced(0, 1, block.timestamp);
     }
     
     function endPresale() external onlyGovernance {
