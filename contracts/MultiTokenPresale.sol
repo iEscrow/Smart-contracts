@@ -67,7 +67,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     // Vesting schedule tracking (25% every 30 days)
     mapping(address => uint256) public claimedAmount; // Total amount user has claimed so far
     mapping(address => uint256) public lastClaimTime; // Last time user claimed tokens
-    uint256 public tgeTimestamp; // Token Generation Event timestamp (set when presale ends)
     uint256 public constant VESTING_PERIOD = 30 days; // 30 days between claims
     uint256 public constant VESTING_PERCENTAGE = 25; // 25% per vesting period
     
@@ -124,7 +123,6 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     );
     
     event TokensClaimed(address indexed user, uint256 amount);
-    event TGETimestampSet(uint256 timestamp);
     event PriceUpdated(address indexed token, uint256 newPrice);
     event TokenStatusUpdated(address indexed token, bool isActive);
     event PresaleStarted(uint256 startTime, uint256 endTime);
@@ -885,17 +883,17 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     ///      - 25% after 30 days
     ///      - 25% after 60 days
     ///      - 25% after 90 days (100% total)
+    ///      TGE timestamp is the presale end timestamp
     function claimTokens() external nonReentrant whenNotPaused {
         require(totalPurchased[msg.sender] > 0, "No tokens to claim");
         require(presaleEnded || escrowPresaleEnded, "No presale ended yet");
-        require(tgeTimestamp > 0, "TGE timestamp not set");
         
         uint256 totalAllocation = totalPurchased[msg.sender];
         uint256 alreadyClaimed = claimedAmount[msg.sender];
         
         require(alreadyClaimed < totalAllocation, "All tokens already claimed");
         
-        // Calculate how much user can claim based on time elapsed since TGE
+        // Calculate how much user can claim based on time elapsed since TGE (presale end)
         uint256 claimableAmount = _calculateClaimableAmount(msg.sender);
         
         require(claimableAmount > 0, "No tokens available to claim yet");
@@ -917,7 +915,11 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         uint256 totalAllocation = totalPurchased[user];
         uint256 alreadyClaimed = claimedAmount[user];
         
-        // Calculate time elapsed since TGE
+        // Get TGE timestamp (presale end timestamp)
+        uint256 tgeTimestamp = _getTGETimestamp();
+        require(tgeTimestamp > 0, "Presale not ended yet");
+        
+        // Calculate time elapsed since TGE (presale end)
         uint256 timeElapsed = block.timestamp - tgeTimestamp;
         
         // Calculate how many vesting periods have passed (0, 1, 2, or 3)
@@ -988,17 +990,16 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         _unpause();
     }
     
-    /// @notice Set TGE (Token Generation Event) timestamp to start vesting schedule
-    /// @dev Can only be set once, must be called after presale ends
-    /// @param _tgeTimestamp Timestamp when TGE occurs (usually block.timestamp)
-    function setTGETimestamp(uint256 _tgeTimestamp) external onlyGovernance {
-        require(presaleEnded || escrowPresaleEnded, "Presale must end first");
-        require(tgeTimestamp == 0, "TGE timestamp already set");
-        require(_tgeTimestamp >= block.timestamp, "TGE cannot be in the past");
-        require(_tgeTimestamp <= block.timestamp + 30 days, "TGE too far in future");
-        
-        tgeTimestamp = _tgeTimestamp;
-        emit TGETimestampSet(_tgeTimestamp);
+    /// @notice Get TGE (Token Generation Event) timestamp
+    /// @dev TGE timestamp is the presale end timestamp (whichever presale ended)
+    /// @return TGE timestamp (0 if no presale has ended)
+    function _getTGETimestamp() internal view returns (uint256) {
+        if (presaleEnded) {
+            return presaleEndTime;
+        } else if (escrowPresaleEnded) {
+            return escrowPresaleEndTime;
+        }
+        return 0;
     }
     
     // ============ VIEW FUNCTIONS ============
@@ -1068,8 +1069,8 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     }
     
     function canClaim() external view returns (bool) {
-        // Can claim if TGE has been set and presale ended
-        return tgeTimestamp > 0 && tgeTimestamp <= block.timestamp && (presaleEnded || escrowPresaleEnded);
+        // Can claim if presale has ended
+        return (presaleEnded || escrowPresaleEnded);
     }
     
     /// @notice Get vesting schedule information for a user
@@ -1091,6 +1092,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
         totalAllocation = totalPurchased[user];
         claimedSoFar = claimedAmount[user];
         
+        uint256 tgeTimestamp = _getTGETimestamp();
         if (tgeTimestamp == 0 || totalAllocation == 0) {
             return (totalAllocation, claimedSoFar, 0, 0, 0, 0);
         }
