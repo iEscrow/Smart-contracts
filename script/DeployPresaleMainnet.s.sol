@@ -27,7 +27,7 @@ contract DeployPresaleMainnet is Script {
     // Presale parameters
     uint256 public constant PRESALE_RATE = 66_666_666_666_666_666_667; // ~66.67 tokens per USD = $0.015 per token (18 decimals)
     uint256 public constant MAX_TOKENS_FOR_PRESALE = 5_000_000_000 * 10**18; // 5B tokens
-    uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025 11:00 AM UTC
+    uint256 public constant PRESALE_LAUNCH_DATE = 1763856000; // Nov 23, 2025 00:00 UTC
 
     // Mainnet token addresses (real tokens - already deployed)
     address public constant WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;

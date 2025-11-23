@@ -27,7 +27,7 @@ contract DelayedClaimTest is Test {
     
     uint256 public constant PRESALE_RATE = 66666666666666666667; // 66.67 tokens per USD = $0.015 per token
     uint256 public constant MAX_TOKENS = 5_000_000_000 * 1e18; // 5 billion
-    uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025
+    uint256 public constant PRESALE_LAUNCH_DATE = 1763856000; // Nov 23, 2025 00:00 UTC
     
     function setUp() public {
         signer = vm.addr(signerPrivateKey);

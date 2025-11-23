@@ -15,7 +15,7 @@ async function main() {
   const BACKEND_SIGNER = "0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2";
   const PRESALE_RATE = "66666666666666666667"; // ~66.67 tokens per USD = $0.015 per token (18 decimals)
   const MAX_TOKENS_FOR_PRESALE = hre.ethers.parseEther("5000000000"); // 5B tokens
-  const PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025 11:00 AM UTC
+  const PRESALE_LAUNCH_DATE = 1763856000; // Nov 23, 2025 00:00 UTC
 
   // Step 1: Deploy ESCROW Token
   console.log("\n=== Step 1: Deploying ESCROW Token ===");

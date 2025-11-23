@@ -84,7 +84,7 @@ contract MultiTokenPresale is Ownable, ReentrancyGuard, Pausable {
     bool public escrowPresaleEnded;
     
     // Scheduled launch and two rounds
-    uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025 11:00 AM UTC
+    uint256 public constant PRESALE_LAUNCH_DATE = 1763856000; // Nov 23, 2025 00:00 UTC
     uint256 public constant MAX_PRESALE_DURATION = 34 days;
     uint256 public constant ROUND1_DURATION = 23 days;
     uint256 public constant ROUND2_DURATION = 11 days;
