@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 
 /// @title GRO-19 Audit Fix Tests
 /// @notice Tests for in-contract replay protection as defense-in-depth
@@ -58,7 +58,6 @@ contract GRO19_AuditFixTest is Test {
     
     function _startPresale() internal {
         vm.warp(LAUNCH_DATE + 1);
-        presale.autoStartIEscrowPresale();
     }
     
     /// @notice Test that in-contract replay protection prevents reusing a voucher

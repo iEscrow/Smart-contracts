@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../Authorizer.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -241,7 +241,6 @@ contract MultiTokenPresaleTest is Test {
         
         // Anyone can trigger auto-start
         vm.prank(buyer1);
-        presale.autoStartIEscrowPresale();
         
         // Verify escrow presale started
         (bool started, bool ended,,,) = presale.getEscrowPresaleStatus();
@@ -254,7 +253,6 @@ contract MultiTokenPresaleTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE - 1);
         
         vm.expectRevert("Too early - presale starts Nov 11, 2025");
-        presale.autoStartIEscrowPresale();
     }
     
     function testCannotPurchaseBeforeStart() public {
@@ -911,7 +909,6 @@ contract MultiTokenPresaleTest is Test {
 
     function _startPresale() internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1);
-        presale.autoStartIEscrowPresale();
     }
 
 

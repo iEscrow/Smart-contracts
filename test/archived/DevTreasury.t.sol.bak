@@ -2,10 +2,10 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../DevTreasury.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/DevTreasury.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -96,7 +96,6 @@ contract DevTreasuryTest is Test {
         
         // Start and end presale
         vm.warp(1762819200 + 1);
-        presale.autoStartIEscrowPresale();
         vm.warp(block.timestamp + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
@@ -124,7 +123,6 @@ contract DevTreasuryTest is Test {
         
         // Start and end presale
         vm.warp(1762819200 + 1);
-        presale.autoStartIEscrowPresale();
         vm.warp(block.timestamp + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
@@ -145,7 +143,6 @@ contract DevTreasuryTest is Test {
         
         // Start and end presale
         vm.warp(1762819200 + 1);
-        presale.autoStartIEscrowPresale();
         vm.warp(block.timestamp + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
@@ -164,7 +161,6 @@ contract DevTreasuryTest is Test {
         
         // Start and end presale
         vm.warp(1762819200 + 1);
-        presale.autoStartIEscrowPresale();
         vm.warp(block.timestamp + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
@@ -207,7 +203,6 @@ contract DevTreasuryTest is Test {
         
         // Start presale
         vm.warp(1762819200 + 1);
-        presale.autoStartIEscrowPresale();
         assertFalse(devTreasury.isPresaleEnded());
         
         // End presale

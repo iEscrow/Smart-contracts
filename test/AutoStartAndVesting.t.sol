@@ -16,19 +16,22 @@ contract AutoStartAndVestingTest is Test {
     address public owner = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2;
     address public user1 = address(0x1);
     address public user2 = address(0x2);
-    address public signer = address(0x3);
+    uint256 public signerPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
+    address public signer;
     
-    uint256 public constant PRESALE_RATE = 666666666666666667000; // 666.666 tokens per USD
+    uint256 public constant PRESALE_RATE = 66666666666666666667; // 66.67 tokens per USD = $0.015 per token
     uint256 public constant MAX_TOKENS = 5_000_000_000 * 1e18; // 5 billion
     uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025
     
     function setUp() public {
+        signer = vm.addr(signerPrivateKey);
+        
         vm.startPrank(owner);
         
         // Deploy contracts
         token = new EscrowToken();
         devTreasury = new DevTreasury(owner);
-        authorizer = new Authorizer(signer, address(0)); // No presale address for now
+        authorizer = new Authorizer(signer, owner);
         
         presale = new MultiTokenPresale(
             address(token),
@@ -38,12 +41,11 @@ contract AutoStartAndVestingTest is Test {
         );
         
         // Update authorizer with presale address
-        authorizer.updatePresaleAddress(address(presale));
         presale.updateAuthorizer(address(authorizer));
         presale.setVoucherSystemEnabled(true);
         
         // Mint and send tokens to presale
-        token.mint(address(presale), MAX_TOKENS);
+        token.mintPresaleAllocation(address(presale));
         
         vm.stopPrank();
         
@@ -96,7 +98,7 @@ contract AutoStartAndVestingTest is Test {
         vm.prank(owner);
         presale.endEscrowPresale();
         
-        uint256 tgeTimestamp = presale.tgeTimestamp();
+        uint256 tgeTimestamp = presale.escrowPresaleEndTime();
         assertGt(tgeTimestamp, 0, "TGE timestamp should be set");
         assertEq(tgeTimestamp, block.timestamp, "TGE should equal block timestamp");
     }
@@ -108,7 +110,7 @@ contract AutoStartAndVestingTest is Test {
         vm.prank(owner);
         presale.emergencyEndEscrowPresale();
         
-        uint256 tgeTimestamp = presale.tgeTimestamp();
+        uint256 tgeTimestamp = presale.escrowPresaleEndTime();
         assertGt(tgeTimestamp, 0, "TGE timestamp should be set");
     }
     
@@ -116,18 +118,33 @@ contract AutoStartAndVestingTest is Test {
     function _makePurchase(address user, uint256 amount) internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1 days);
         
+        uint256 userNonce = authorizer.getNonce(user);
+        
         Authorizer.Voucher memory voucher = Authorizer.Voucher({
             buyer: user,
             beneficiary: user,
             paymentToken: address(0), // Native ETH
             usdLimit: 1000000 * 1e8, // $1M limit
-            nonce: 1,
+            nonce: userNonce,
             deadline: block.timestamp + 1 days,
             presale: address(presale)
         });
         
-        bytes32 digest = authorizer.getVoucherDigest(voucher);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(uint256(keccak256(abi.encodePacked(signer))), digest);
+        // Generate EIP-712 signature
+        bytes32 voucherHash = keccak256(abi.encode(
+            keccak256("Voucher(address buyer,address beneficiary,address paymentToken,uint256 usdLimit,uint256 nonce,uint256 deadline,address presale)"),
+            voucher.buyer,
+            voucher.beneficiary,
+            voucher.paymentToken,
+            voucher.usdLimit,
+            voucher.nonce,
+            voucher.deadline,
+            voucher.presale
+        ));
+        
+        bytes32 domainSeparator = authorizer.getDomainSeparator();
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, voucherHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         bytes memory signature = abi.encodePacked(r, s, v);
         
         vm.prank(user);
@@ -179,7 +196,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Claim at TGE (25%)
         vm.prank(user1);
@@ -208,7 +225,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Claim at TGE
         vm.prank(user1);
@@ -236,7 +253,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Wait 90 days and claim all
         vm.warp(tgeTime + 90 days);
@@ -279,7 +296,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Check vesting info at TGE
         (
@@ -316,7 +333,7 @@ contract AutoStartAndVestingTest is Test {
         presale.claimTokens();
         
         // User2 waits 30 days
-        vm.warp(presale.tgeTimestamp() + 30 days);
+        vm.warp(presale.escrowPresaleEndTime() + 30 days);
         vm.prank(user2);
         presale.claimTokens();
         
@@ -335,7 +352,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Claim at TGE (25%)
         vm.prank(user1);
@@ -371,7 +388,7 @@ contract AutoStartAndVestingTest is Test {
         presale.endEscrowPresale();
         
         // Wait 90 days and claim all
-        vm.warp(presale.tgeTimestamp() + 90 days);
+        vm.warp(presale.escrowPresaleEndTime() + 90 days);
         vm.prank(user1);
         presale.claimTokens();
         
@@ -391,7 +408,7 @@ contract AutoStartAndVestingTest is Test {
         vm.warp(PRESALE_LAUNCH_DATE + 35 days);
         vm.prank(owner);
         presale.endEscrowPresale();
-        uint256 tgeTime = presale.tgeTimestamp();
+        uint256 tgeTime = presale.escrowPresaleEndTime();
         
         // Claim at TGE
         vm.prank(user1);

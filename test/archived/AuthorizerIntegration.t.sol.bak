@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../Authorizer.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
 
 contract AuthorizerIntegrationTest is Test {
     Authorizer public authorizer;
@@ -60,7 +60,6 @@ contract AuthorizerIntegrationTest is Test {
         
         // Start presale
         vm.warp(1762819200 + 1); // After launch date
-        presale.autoStartIEscrowPresale();
         
         vm.stopPrank();
         

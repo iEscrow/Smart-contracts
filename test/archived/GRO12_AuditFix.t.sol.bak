@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 
 /// @title GRO-12 Audit Fix Tests
 /// @notice Comprehensive tests for the dual presale system fix
@@ -63,7 +63,6 @@ contract GRO12_AuditFixTest is Test {
         vm.startPrank(owner);
         
         // Start escrow presale
-        presale.autoStartIEscrowPresale();
         vm.stopPrank();
         
         // But purchasing should fail when both are "active"
@@ -157,7 +156,6 @@ contract GRO12_AuditFixTest is Test {
         
         // Start escrow presale (anyone can call)
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         // Verify escrow presale state
         (bool escrowStarted, bool escrowEnded, uint256 escrowStartTime, uint256 escrowEndTime, uint256 escrowCurrentTime) = presale.getEscrowPresaleStatus();
@@ -205,7 +203,6 @@ contract GRO12_AuditFixTest is Test {
         // Phase 1: Start and run escrow presale
         vm.warp(LAUNCH_DATE + 1);
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         // Make purchase in escrow presale
         Authorizer.Voucher memory voucher1 = Authorizer.Voucher({
@@ -274,12 +271,10 @@ contract GRO12_AuditFixTest is Test {
         
         // Start escrow presale first time
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         // Try to start again
         vm.prank(user2);
         vm.expectRevert("Escrow presale already started");
-        presale.autoStartIEscrowPresale();
     }
     
     /// @notice Test that main presale cannot be started twice
@@ -306,7 +301,6 @@ contract GRO12_AuditFixTest is Test {
         
         // Start escrow presale
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         // Verify we're in escrow round 1
         assertEq(presale.escrowCurrentRound(), 1);
@@ -346,7 +340,6 @@ contract GRO12_AuditFixTest is Test {
         // Start escrow presale
         vm.warp(LAUNCH_DATE + 1);
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         assertEq(presale.getActivePresaleMode(), 2);
         (mainStarted, mainEnded, escrowStarted, escrowEnded, activeMode, status) = presale.getBothPresalesStatus();
@@ -362,7 +355,6 @@ contract GRO12_AuditFixTest is Test {
         // Start escrow presale and make purchase
         vm.warp(LAUNCH_DATE);
         vm.prank(user1);
-        presale.autoStartIEscrowPresale();
         
         Authorizer.Voucher memory voucher = Authorizer.Voucher({
             buyer: user1,

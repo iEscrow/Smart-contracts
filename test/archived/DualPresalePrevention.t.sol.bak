@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 
 contract DualPresalePreventionTest is Test {
     MultiTokenPresale public presale;
@@ -42,7 +42,6 @@ contract DualPresalePreventionTest is Test {
     function test_CannotStartMainPresaleIfEscrowPresaleActive() public {
         // Start escrow presale first
         vm.warp(PRESALE_LAUNCH_DATE);
-        presale.autoStartIEscrowPresale();
         
         // Try to start main presale - should fail
         vm.prank(owner);
@@ -60,13 +59,11 @@ contract DualPresalePreventionTest is Test {
         
         // Try to start escrow presale - should fail
         vm.expectRevert("Main presale already active");
-        presale.autoStartIEscrowPresale();
     }
     
     function test_CanStartMainPresaleAfterEscrowPresaleEnds() public {
         // Start and end escrow presale
         vm.warp(PRESALE_LAUNCH_DATE);
-        presale.autoStartIEscrowPresale();
         
         vm.warp(PRESALE_LAUNCH_DATE + MAX_PRESALE_DURATION + 1);
         vm.prank(owner);
@@ -90,7 +87,6 @@ contract DualPresalePreventionTest is Test {
         
         // Now should be able to start escrow presale
         vm.warp(PRESALE_LAUNCH_DATE);
-        presale.autoStartIEscrowPresale();
         
         assertTrue(presale.escrowPresaleStartTime() > 0);
     }
@@ -98,7 +94,6 @@ contract DualPresalePreventionTest is Test {
     function test_CanStartMainPresaleAfterEmergencyEndEscrow() public {
         // Start escrow presale
         vm.warp(PRESALE_LAUNCH_DATE);
-        presale.autoStartIEscrowPresale();
         
         // Emergency end it
         vm.prank(owner);

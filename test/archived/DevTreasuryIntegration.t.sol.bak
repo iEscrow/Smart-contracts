@@ -2,10 +2,10 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../DevTreasury.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/DevTreasury.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -89,7 +89,6 @@ contract DevTreasuryIntegrationTest is Test {
         
         // Start presale
         vm.warp(1762819200 + 1); // After launch date
-        presale.autoStartIEscrowPresale();
         
         vm.stopPrank();
         

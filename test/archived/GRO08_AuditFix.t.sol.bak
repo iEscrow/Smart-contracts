@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../Authorizer.sol";
-import "../EscrowToken.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -85,7 +85,6 @@ contract GRO08AuditFixTest is Test {
     
     function _startPresale() internal {
         vm.warp(PRESALE_LAUNCH_DATE + 1);
-        presale.autoStartIEscrowPresale();
     }
     
     function _startMainPresale() internal {

@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../Authorizer.sol";
-import "../EscrowToken.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/EscrowToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -135,7 +135,6 @@ contract GRO07AuditFixTest is Test {
         
         // Start presale after setting the price
         vm.warp(1762819200); // Nov 11, 2025
-        presale.autoStartIEscrowPresale();
         vm.stopPrank();
         
         vm.startPrank(buyer);
@@ -175,7 +174,6 @@ contract GRO07AuditFixTest is Test {
     function testGRO07_ViewFunctionRevertsForSmallAmounts() public {
         // Start presale first
         vm.warp(1762819200); // Nov 11, 2025
-        presale.autoStartIEscrowPresale();
         
         // Test the view function also reverts for small amounts
         uint256 smallAmount = 1000; // Below threshold
@@ -187,7 +185,6 @@ contract GRO07AuditFixTest is Test {
     function testGRO07_ValidAmountStillWorks() public {
         // Start presale first
         vm.warp(1762819200); // Nov 11, 2025
-        presale.autoStartIEscrowPresale();
         
         vm.startPrank(buyer);
         
@@ -237,7 +234,6 @@ contract GRO07AuditFixTest is Test {
         
         // Start presale after setting the price
         vm.warp(1762819200); // Nov 11, 2025
-        presale.autoStartIEscrowPresale();
         vm.stopPrank();
         
         // With this price: usdValue = (amount * 100) / (10^6 * 10^8) = amount * 100 / 1e14

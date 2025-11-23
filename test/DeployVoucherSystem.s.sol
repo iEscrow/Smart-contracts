@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
-import "../MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
 
 contract DeployVoucherSystem is Script {
     // Deployment parameters

@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../MultiTokenPresale.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
+import "../contracts/MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
 
 contract UpdatePresaleRateTest is Test {
     MultiTokenPresale public presale;
@@ -149,7 +149,6 @@ contract UpdatePresaleRateTest is Test {
         vm.warp(1762819200); // Nov 11, 2025
         
         // Start escrow presale
-        presale.autoStartIEscrowPresale();
         
         // Move time to after Round 1 ends
         vm.warp(block.timestamp + ROUND1_DURATION + 1);
@@ -167,7 +166,6 @@ contract UpdatePresaleRateTest is Test {
         vm.warp(1762819200); // Nov 11, 2025
         
         // Start escrow presale
-        presale.autoStartIEscrowPresale();
         
         // Move time to after Round 1 ends
         vm.warp(block.timestamp + ROUND1_DURATION + 1);
