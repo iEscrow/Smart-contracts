@@ -2,10 +2,10 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
-import "../EscrowToken.sol";
-import "../Authorizer.sol";
-import "../DevTreasury.sol";
-import "../MultiTokenPresale.sol";
+import "../contracts/EscrowToken.sol";
+import "../contracts/Authorizer.sol";
+import "../contracts/DevTreasury.sol";
+import "../contracts/MultiTokenPresale.sol";
 
 /**
  * @title DeployPresaleMainnet
@@ -25,8 +25,9 @@ contract DeployPresaleMainnet is Script {
     address public constant BACKEND_SIGNER = 0xd81d23f2e37248F8fda5e7BF0a6c047AE234F0A2; // Backend signer for vouchers
 
     // Presale parameters
-    uint256 public constant PRESALE_RATE = 666_666_666_666_666_667; // ~666.67 tokens per USD (18 decimals)
+    uint256 public constant PRESALE_RATE = 666_666_666_666_666_666_667; // ~666.67 tokens per USD = $0.0015 per token (18 decimals)
     uint256 public constant MAX_TOKENS_FOR_PRESALE = 5_000_000_000 * 10**18; // 5B tokens
+    uint256 public constant PRESALE_LAUNCH_DATE = 1764068400; // Nov 25, 2025 11:00 AM UTC
 
     // Mainnet token addresses (real tokens - already deployed)
     address public constant WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
@@ -51,11 +52,13 @@ contract DeployPresaleMainnet is Script {
         console.log("\n=== Step 1: Deploying ESCROW Token ===");
         escrowToken = new EscrowToken();
         console.log("ESCROW Token deployed at:", address(escrowToken));
+        _verifyEscrowToken();
 
         // Step 2: Deploy Authorizer for KYC voucher system
         console.log("\n=== Step 2: Deploying Authorizer ===");
         authorizer = new Authorizer(BACKEND_SIGNER, OWNER_ADDRESS);
         console.log("Authorizer deployed at:", address(authorizer));
+        _verifyAuthorizer();
 
         // Step 3: Calculate future presale address (for DevTreasury constructor)
         console.log("\n=== Step 3: Calculating Future Presale Address ===");
@@ -67,6 +70,7 @@ contract DeployPresaleMainnet is Script {
         devTreasury = new DevTreasury(predictedPresaleAddress);
         console.log("DevTreasury deployed at:", address(devTreasury));
         console.log("DevTreasury linked to future presale:", predictedPresaleAddress);
+        _verifyDevTreasury(predictedPresaleAddress);
 
         // Step 5: Deploy MultiTokenPresale with DevTreasury address
         console.log("\n=== Step 5: Deploying Presale Contract ===");
@@ -81,11 +85,13 @@ contract DeployPresaleMainnet is Script {
         // Verify prediction was correct
         require(address(presale) == predictedPresaleAddress, "Presale address mismatch!");
         console.log("SUCCESS: Presale address matches prediction");
+        _verifyPresale();
 
         // Step 6: Mint presale allocation to presale contract
         console.log("\n=== Step 6: Minting Presale Allocation ===");
         escrowToken.mintPresaleAllocation(address(presale));
         console.log("Presale allocation minted successfully");
+        _verifyPresaleBalance();
         
         console.log("\n=== Configuration Steps (Owner Only) ===");
         console.log("NOTE: The following must be done by owner:", OWNER_ADDRESS);
@@ -135,5 +141,73 @@ contract DeployPresaleMainnet is Script {
         console.log("\n========================================");
         console.log("DEPLOYMENT COMPLETED!");
         console.log("========================================");
+    }
+
+    // ============ VERIFICATION FUNCTIONS ============
+
+    function _verifyEscrowToken() internal view {
+        console.log("Verifying ESCROW Token...");
+        // Initial supply is 8.4B (3.4B marketing + 5B liquidity)
+        require(escrowToken.totalSupply() == 8_400_000_000 * 10**18, "Total supply mismatch");
+        require(keccak256(bytes(escrowToken.name())) == keccak256(bytes("Escrow Token")), "Name mismatch");
+        require(keccak256(bytes(escrowToken.symbol())) == keccak256(bytes("ESCROW")), "Symbol mismatch");
+        require(escrowToken.decimals() == 18, "Decimals mismatch");
+        console.log("[OK] ESCROW Token verified");
+    }
+
+    function _verifyAuthorizer() internal view {
+        console.log("Verifying Authorizer...");
+        require(authorizer.signer() == BACKEND_SIGNER, "Signer mismatch");
+        require(authorizer.owner() == OWNER_ADDRESS, "Owner mismatch");
+        console.log("[OK] Authorizer verified");
+    }
+
+    function _verifyDevTreasury(address predictedPresale) internal view {
+        console.log("Verifying DevTreasury...");
+        require(address(devTreasury.presale()) == predictedPresale, "Presale address mismatch in DevTreasury");
+        console.log("[OK] DevTreasury verified");
+    }
+
+    function _verifyPresale() internal view {
+        console.log("Verifying Presale Contract...");
+        
+        // Basic configuration
+        require(address(presale.presaleToken()) == address(escrowToken), "Presale token mismatch");
+        require(presale.presaleRate() == PRESALE_RATE, "Presale rate mismatch");
+        require(presale.maxTokensToMint() == MAX_TOKENS_FOR_PRESALE, "Max tokens mismatch");
+        require(presale.devTreasury() == address(devTreasury), "Dev treasury mismatch");
+        require(presale.owner() == OWNER_ADDRESS, "Owner mismatch");
+        require(presale.treasury() == OWNER_ADDRESS, "Treasury mismatch");
+        
+        // Auto-start verification
+        require(presale.escrowPresaleStartTime() == PRESALE_LAUNCH_DATE, "Launch date mismatch");
+        require(presale.escrowCurrentRound() == 1, "Should be in round 1");
+        require(presale.escrowPresaleEnded() == false, "Should not be ended");
+        require(
+            presale.escrowPresaleEndTime() == PRESALE_LAUNCH_DATE + 34 days,
+            "End time mismatch"
+        );
+        require(
+            presale.escrowRound1EndTime() == PRESALE_LAUNCH_DATE + 23 days,
+            "Round 1 end time mismatch"
+        );
+        
+        // Gas buffer
+        require(presale.gasBuffer() == 0.0005 ether, "Gas buffer mismatch");
+        
+        // Token prices (spot check)
+        (uint256 ethPrice, bool ethActive, uint8 ethDecimals) = presale.tokenPrices(address(0));
+        require(ethPrice == 4200 * 1e8, "ETH price mismatch");
+        require(ethActive == true, "ETH should be active");
+        require(ethDecimals == 18, "ETH decimals mismatch");
+        
+        console.log("[OK] Presale Contract verified");
+    }
+
+    function _verifyPresaleBalance() internal view {
+        console.log("Verifying Presale Token Balance...");
+        uint256 presaleBalance = escrowToken.balanceOf(address(presale));
+        require(presaleBalance == MAX_TOKENS_FOR_PRESALE, "Presale balance mismatch");
+        console.log("[OK] Presale has correct token balance:", presaleBalance / 1e18, "ESCROW");
     }
 }
