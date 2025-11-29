@@ -67,6 +67,8 @@ contract TokenVesting is ReentrancyGuard, Ownable {
     address public constant BENEFICIARY9 = 0x68f5d8e68abDf9c6C0233DE2bdAda5e18CC6634d;
     address public constant BENEFICIARY10 = 0xCACEeBfD2E88ce3741dd45622cDf5D2f3166e8f5;
     address public constant BENEFICIARY11 = 0x403D8E7c3a1f7a0C7faF2a81b52CC74D775E9E21;
+    address public constant BENEFICIARY30 = 0x253e7ab1f0e811fbd2b62cdc879baf19cee35f95; 
+    address public constant BENEFICIARY31 = 0x7bbc06d8baddcacafb7944f736daff83ed6076ec; 
     
     // 40M allocation (4%)
     address public constant BENEFICIARY12 = 0x2C9760E45abB8879A6ac86d3CA19012Cf513738d;
@@ -105,13 +107,15 @@ contract TokenVesting is ReentrancyGuard, Ownable {
     uint256 public constant ALLOCATION9 = 100;   // 1%
     uint256 public constant ALLOCATION10 = 100;  // 1%
     uint256 public constant ALLOCATION11 = 100;  // 1%
+    uint256 public constant ALLOCATION30 = 100;  // 1% - Prosper
+    uint256 public constant ALLOCATION31 = 100;  // 1% - Salim
     
     // 40M = 4% (400 basis points)
     uint256 public constant ALLOCATION12 = 400;  // 4%
     
     // 50M each = 5% each (500 basis points)
     uint256 public constant ALLOCATION13 = 500;  // 5%
-    uint256 public constant ALLOCATION14 = 500;  // 5%
+    uint256 public constant ALLOCATION14 = 300;  // 3% - 30M (reduced from 50M)
     uint256 public constant ALLOCATION15 = 500;  // 5%
     uint256 public constant ALLOCATION16 = 500;  // 5%
     uint256 public constant ALLOCATION17 = 500;  // 5%
@@ -150,7 +154,8 @@ contract TokenVesting is ReentrancyGuard, Ownable {
             ALLOCATION11 + ALLOCATION12 + ALLOCATION13 + ALLOCATION14 + ALLOCATION15 +
             ALLOCATION16 + ALLOCATION17 + ALLOCATION18 + ALLOCATION19 + ALLOCATION20 +
             ALLOCATION21 + ALLOCATION22 + ALLOCATION23 + ALLOCATION24 + ALLOCATION25 +
-            ALLOCATION26 + ALLOCATION27 + ALLOCATION28 + ALLOCATION29 == BASIS_POINTS,
+            ALLOCATION26 + ALLOCATION27 + ALLOCATION28 + ALLOCATION29 + ALLOCATION30 +
+            ALLOCATION31 == BASIS_POINTS,
             "Allocations must sum to 100%"
         );
         
@@ -282,6 +287,10 @@ contract TokenVesting is ReentrancyGuard, Ownable {
             return (TOTAL_ALLOCATION * ALLOCATION28) / BASIS_POINTS;
         } else if (beneficiary == BENEFICIARY29) {
             return (TOTAL_ALLOCATION * ALLOCATION29) / BASIS_POINTS;
+        } else if (beneficiary == BENEFICIARY30) {
+            return (TOTAL_ALLOCATION * ALLOCATION30) / BASIS_POINTS;
+        } else if (beneficiary == BENEFICIARY31) {
+            return (TOTAL_ALLOCATION * ALLOCATION31) / BASIS_POINTS;
         }
         return 0;
     }
